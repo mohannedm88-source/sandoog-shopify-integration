@@ -6,13 +6,14 @@ const logger = require('./logger');
  * Thin client around the Sandoog Open API.
  * https://developers.sandoog.net/reference/sandoog-open-api
  *
- * Auth flow per the docs:
+ * Auth flow:
  *   1) POST /auth with header `Api-Key: <key>` -> { access_token, expires_in }
- *   2) Subsequent calls send BOTH `Api-Key` and `Authorization: Bearer <token>`.
- *      (Sandoog's own overview describes the Bearer step; the auto-generated
- *      per-endpoint reference only lists `Api-Key` explicitly. Sending both is
- *      harmless and covers either interpretation — confirm with cs@sandoog.net
- *      if you want to drop one.)
+ *   2) Subsequent calls send `Api-Key` only. (Sandoog's overview also
+ *      describes a Bearer step, but sending `Authorization: Bearer <token>`
+ *      on the sandbox gateway triggers a gateway-level "Invalid key=value
+ *      pair... in Authorization header" error — so we skip it. If a future
+ *      Sandoog change requires it again, confirm the exact expected format
+ *      with cs@sandoog.net first.)
  */
 
 let cachedToken = null; // { access_token, expiresAt }
@@ -55,10 +56,15 @@ async function getAccessToken() {
 }
 
 async function authHeaders() {
-  const token = await getAccessToken();
+  // Sandoog's gateway chokes on a plain "Bearer <token>" Authorization header
+  // (returns a gateway-level "Invalid key=value pair... in Authorization
+  // header" error), and the per-endpoint reference docs only ever list
+  // `Api-Key` as the required header — so send Api-Key only. getAccessToken()
+  // is still called first to make sure the key is valid and to keep the
+  // token-cache warm in case a future Sandoog change needs it again.
+  await getAccessToken();
   return {
     'Api-Key': config.sandoog.apiKey,
-    Authorization: `Bearer ${token}`,
     'Content-Type': 'application/json',
   };
 }
