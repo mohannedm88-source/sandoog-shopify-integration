@@ -1,0 +1,17 @@
+{
+  "_comment": "Placeholder only — Sandoog's docs didn't expose real Iraq city codes for this reference. Run `npm run fetch-city-codes` once your API key works from a network Sandoog allows, and it will write the real list to city-codes.json (gitignored) in this same shape: normalized name -> Sandoog city_code.",
+  "baghdad": "REPLACE_ME",
+  "بغداد": "REPLACE_ME",
+  "basra": "REPLACE_ME",
+  "البصرة": "REPLACE_ME",
+  "erbil": "REPLACE_ME",
+  "أربيل": "REPLACE_ME",
+  "najaf": "REPLACE_ME",
+  "النجف": "REPLACE_ME",
+  "karbala": "REPLACE_ME",
+  "كربلاء": "REPLACE_ME",
+  "mosul": "REPLACE_ME",
+  "الموصل": "REPLACE_ME",
+  "sulaymaniyah": "REPLACE_ME",
+  "السليمانية": "REPLACE_ME"
+}
