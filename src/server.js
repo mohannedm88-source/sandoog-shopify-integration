@@ -13,6 +13,35 @@ const FULFILLED_EVENT_TYPES = new Set(['Delivered', 'Complete']);
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
 /**
+ * One-time setup helper: tells Sandoog where to POST order status updates.
+ * Safe to call more than once (it just re-registers the same URL). Needs no
+ * secret from the caller — it uses this service's own configured
+ * SANDOOG_API_KEY / SANDOOG_CALLBACK_SECRET / PUBLIC_BASE_URL.
+ * Remove this route once the webhook is confirmed registered.
+ */
+app.get('/admin/register-sandoog-webhook', async (_req, res) => {
+  try {
+    if (!config.service.publicBaseUrl) {
+      throw new Error('PUBLIC_BASE_URL is not set');
+    }
+    if (!config.sandoog.callbackSecret) {
+      throw new Error('SANDOOG_CALLBACK_SECRET is not set');
+    }
+    const orderUrl = `${config.service.publicBaseUrl.replace(/\/$/, '')}/webhooks/sandoog/order-status`;
+    const result = await sandoog.registerWebhook({
+      callbackKey: config.sandoog.callbackSecret,
+      orderUrl,
+    });
+    logger.info(`Registered Sandoog webhook -> ${orderUrl}`, result);
+    res.json({ ok: true, orderUrl, result });
+  } catch (err) {
+    const detail = err.response ? err.response.data : err.message;
+    logger.error('register-sandoog-webhook failed', detail);
+    res.status(500).json({ ok: false, error: detail });
+  }
+});
+
+/**
  * Shopify -> this service: fired on `orders/create`.
  * Needs the RAW body to verify Shopify's HMAC signature, so this route uses
  * express.raw() instead of the global json() parser.
