@@ -36,8 +36,11 @@ app.get('/setup/register-sandoog-webhook', async (_req, res) => {
     res.json({ ok: true, orderUrl, result });
   } catch (err) {
     const detail = err.response ? err.response.data : err.message;
-    logger.error('register-sandoog-webhook failed', detail);
-    res.status(500).json({ ok: false, error: detail });
+    const debug = err.config
+      ? { method: err.config.method, url: err.config.baseURL + err.config.url, status: err.response && err.response.status }
+      : undefined;
+    logger.error('register-sandoog-webhook failed', detail, debug);
+    res.status(500).json({ ok: false, error: detail, debug });
   }
 });
 
