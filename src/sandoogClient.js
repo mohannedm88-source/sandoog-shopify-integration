@@ -121,7 +121,7 @@ async function getCityCodes() {
  * https://developers.sandoog.net/reference/post_webhooks-register-urls
  */
 async function registerWebhook({ callbackKey, orderUrl }) {
-  const res = await request('post', '/webhooks-register-urls', {
+  const res = await request('post', '/webhooks/register-urls', {
     callback_key: callbackKey,
     order_url: orderUrl,
   });
