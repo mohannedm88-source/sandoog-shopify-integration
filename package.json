@@ -1,0 +1,24 @@
+{
+  "name": "sandoog-shopify-integration",
+  "version": "1.0.0",
+  "description": "Bridge service connecting Zorita Iraq (Shopify) to Sandoog delivery (3PL) — pushes new Shopify orders to Sandoog and syncs delivery status back to Shopify.",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "fetch-city-codes": "node scripts/fetch-city-codes.js",
+    "register-sandoog-webhook": "node scripts/register-sandoog-webhook.js",
+    "register-shopify-webhook": "node scripts/register-shopify-webhook.js",
+    "test-create-order": "node scripts/test-create-order.js",
+    "test-shopify-auth": "node scripts/test-shopify-auth.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.7",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
