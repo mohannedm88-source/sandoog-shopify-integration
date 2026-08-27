@@ -19,7 +19,7 @@ app.get('/health', (_req, res) => res.json({ ok: true }));
  * SANDOOG_API_KEY / SANDOOG_CALLBACK_SECRET / PUBLIC_BASE_URL.
  * Remove this route once the webhook is confirmed registered.
  */
-app.get('/admin/register-sandoog-webhook', async (_req, res) => {
+app.get('/setup/register-sandoog-webhook', async (_req, res) => {
   try {
     if (!config.service.publicBaseUrl) {
       throw new Error('PUBLIC_BASE_URL is not set');
