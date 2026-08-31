@@ -89,7 +89,7 @@ function mapShopifyOrderToSandoog(shopifyOrder) {
     const province = addr.province || '';
 
   const deliveryItems = (shopifyOrder.line_items || []).map((li, idx) => ({
-        id: li.id || idx + 1,
+        id: idx + 1, // Sandoog's API rejects a delivery_items[].id this large (real Shopify line-item ids overflow it) - use a small per-order sequential id instead
         name: li.title || li.name || `Item ${idx + 1}`,
         description: li.variant_title || '',
         quantity: li.quantity || 1,
