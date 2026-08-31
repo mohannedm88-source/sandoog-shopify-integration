@@ -11,66 +11,6 @@ const FULFILLED_EVENT_TYPES = new Set(['Delivered', 'Complete']);
 
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
-// TEMPORARY diagnostic route: tests whether Sandoog's POST /orders rejects a
-// delivery_items[].id that is a real (huge) Shopify line-item id, versus a
-// small sequential id, using an otherwise identical realistic payload.
-app.get('/setup/debug-id-size', async (_req, res) => {
-      const base = {
-              entity_id: config.sandoog.entityId,
-              notes: '',
-              customer: {
-                        name: 'moh mogh',
-                        phone: '+9647737583579',
-                        state: 'baghdad',
-                        email: 'mohanned.m88@gmail.com',
-                        address: 'Baghdad',
-                        latitude: 33.315241,
-                        longitude: 44.3660671,
-              },
-              delivery: {
-                        delivery_type: 'Standard',
-                        delivery_region: 'Center',
-                        delivery_items: [],
-              },
-              payment: {
-                        total_price: 24000,
-                        payment_charge_type: 'Customer',
-                        amount_include_delivery_charge: true,
-                        lines: [{ type: 'Cash', value: 24000, currency: 'IraqDinar', is_paid: false }],
-              },
-      };
-
-      const variants = [
-              ['small sequential id', 1],
-              ['real huge Shopify line-item id', 16655794307284],
-            ];
-
-      const results = [];
-      for (const pair of variants) {
-              const label = pair[0];
-              const itemId = pair[1];
-              const payload = Object.assign({}, base, {
-                        external_reference: 'IDTEST-' + label.replace(/[^a-z0-9]+/gi, '-') + '-' + Date.now(),
-                        delivery: Object.assign({}, base.delivery, {
-                                    delivery_items: [{ id: itemId, name: 'Babydoll Lingerie 4405-26', description: 'Rosy Brown / S/M', quantity: 1 }],
-                        }),
-              });
-              try {
-                        const result = await sandoog.createOrder(payload);
-                        results.push({ label, itemId, ok: true, result: result });
-              } catch (err) {
-                        results.push({
-                                    label,
-                                    itemId,
-                                    ok: false,
-                                    status: err.response ? err.response.status : null,
-                                    data: err.response ? err.response.data : err.message,
-                        });
-              }
-      }
-      res.json({ results });
-});
-
 
 
 // Guards against duplicate/concurrent Shopify webhook deliveries for the
