@@ -66,7 +66,7 @@ app.post(
 
       try {
               const orderPost = mapShopifyOrderToSandoog(shopifyOrder);
-              logger.info('Creating Sandoog order for Shopify order ' + orderName, orderPost);
+logger.info('Creating Sandoog order for Shopify order ' + orderName + ': ' + JSON.stringify(orderPost));
               const result = await sandoog.createOrder(orderPost);
               logger.info('Sandoog accepted order ' + orderName, result);
               sandoogOrderState.set(orderName, 'done');
