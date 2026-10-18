@@ -59,6 +59,8 @@ async function resolveSandoogProductIds(orderPost, shopifyOrder) {
       throw new Error('Sandoog product for SKU "' + rawSku + '" has no id field: ' + JSON.stringify(match));
     }
     items[i].id = Number(match[idKey]);
+    const skuKey = Object.keys(match).find((key) => /sku/i.test(key) && typeof match[key] === 'string');
+    items[i].sku = skuKey ? match[skuKey] : rawSku;
     logger.info('SKU "' + rawSku + '" -> Sandoog product id ' + items[i].id);
   }
   return orderPost;
