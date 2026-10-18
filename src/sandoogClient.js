@@ -107,6 +107,11 @@ async function searchOrders(payload) {
       return res.data;
 }
 
+async function searchProducts(payload) {
+      const res = await request('post', '/products/search', payload);
+      return res.data;
+}
+
 async function getCityCodes() {
       const res = await request('get', '/city-codes');
       return res.data;
@@ -132,6 +137,7 @@ module.exports = {
       getOrder,
       cancelOrder,
       searchOrders,
+      searchProducts,
       getCityCodes,
       registerWebhook,
 };
