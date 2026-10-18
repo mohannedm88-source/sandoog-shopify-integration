@@ -4,6 +4,7 @@ const logger = require('./logger');
 const sandoog = require('./sandoogClient');
 const shopify = require('./shopifyClient');
 const { mapShopifyOrderToSandoog } = require('./orderMapper');
+const { resolveSandoogProductIds } = require('./productResolver');
 
 const app = express();
 
@@ -66,6 +67,7 @@ app.post(
 
       try {
               const orderPost = mapShopifyOrderToSandoog(shopifyOrder);
+              await resolveSandoogProductIds(orderPost, shopifyOrder);
 logger.info('Creating Sandoog order for Shopify order ' + orderName + ': ' + JSON.stringify(orderPost));
               const result = await sandoog.createOrder(orderPost);
               logger.info('Sandoog accepted order ' + orderName, result);
