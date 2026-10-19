@@ -11,6 +11,13 @@ const logger = require('./logger');
  * that's valid 24h, no merchant install/redirect needed.
  * https://shopify.dev/docs/apps/build/authentication-authorization/client-credentials-grant
  */
+// Shopify redirects admin API calls made on a custom/storefront domain to admin.shopify.com,
+// where Cloudflare serves a bot challenge to server IPs. Always use the *.myshopify.com host.
+function shopHost() {
+  const d = String(config.shopify.shopDomain || '').trim().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+  return /\.myshopify\.com$/i.test(d) ? d : 'tcbskm-cz.myshopify.com';
+}
+
 let cachedShopifyToken = null; // { access_token, expiresAt }
 
 function requireClientCreds() {
@@ -33,7 +40,7 @@ async function getShopifyAccessToken() {
         }
 
   const res = await axios.post(
-            `https://${config.shopify.shopDomain}/admin/oauth/access_token`,
+            `https://${shopHost()}/admin/oauth/access_token`,
             new URLSearchParams({
                         grant_type: 'client_credentials',
                         client_id: config.shopify.clientId,
@@ -66,7 +73,7 @@ async function getShopifyAccessToken() {
 async function adminApi() {
         const token = await getShopifyAccessToken();
         return axios.create({
-                  baseURL: `https://${config.shopify.shopDomain}/admin/api/${config.shopify.apiVersion}`,
+                  baseURL: `https://${shopHost()}/admin/api/${config.shopify.apiVersion}`,
                   headers: {
                               'X-Shopify-Access-Token': token,
                               'Content-Type': 'application/json',
