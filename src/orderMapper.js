@@ -19,7 +19,16 @@ function loadCityCodeMap() {
 }
 
 function normalize(str) {
-    return String(str || '').trim().toLowerCase();
+    // Lowercase + trim, unify Arabic letter variants, drop diacritics, and strip
+    // "governorate"/"محافظة" wrappers and the Arabic "ال" prefix so that e.g.
+    // "محافظة أربيل", "اربيل" and "Erbil Governorate" all match the same key.
+    let s = String(str || '').trim().toLowerCase();
+    s = s.replace(/[ً-ٰٟـ]/g, '');
+    s = s.replace(/[أإآ]/g, 'ا').replace(/ى/g, 'ي').replace(/ة/g, 'ه');
+    s = s.replace(/^(محافظه|محافضه)\s+/, '');
+    s = s.replace(/\s+(governorate|province|gov\.?)$/, '').replace(/^(governorate|province)\s+of\s+/, '');
+    s = s.replace(/^ال(?=\S)/, '');
+    return s.replace(/\s+/g, ' ').trim();
 }
 
 /**
@@ -30,7 +39,9 @@ function normalize(str) {
  * to `province`.
  */
 function resolveCityCode(city, province) {
-    const map = loadCityCodeMap();
+    const raw = loadCityCodeMap();
+    const map = {};
+    for (const [k, v] of Object.entries(raw)) map[normalize(k)] = v;
     for (const candidate of [city, province]) {
           const key = normalize(candidate);
           const code = key && map[key];
@@ -45,11 +56,12 @@ function resolveCityCode(city, province) {
 }
 
 function resolveDeliveryRegion(city, province) {
+    const centerList = config.mapping.centerCities.map(normalize);
     const cityKey = normalize(city);
     const provinceKey = normalize(province);
     const isCenter =
-          config.mapping.centerCities.includes(cityKey) ||
-          config.mapping.centerCities.includes(provinceKey);
+          centerList.includes(cityKey) ||
+          centerList.includes(provinceKey);
     return isCenter ? 'Center' : 'County';
 }
 
