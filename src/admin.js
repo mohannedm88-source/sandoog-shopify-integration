@@ -90,7 +90,6 @@ const ORDERS_QUERY = `query ($first: Int!, $q: String) {
       email phone paymentGatewayNames
       totalPriceSet { shopMoney { amount currencyCode } }
       shippingAddress { name phone city province address1 address2 }
-      customer { displayName phone }
       lineItems(first: 30) { nodes { title variantTitle sku quantity } }
     }
   }
@@ -108,8 +107,8 @@ function shape(o) {
     createdAt: o.createdAt,
     status: st.status,
     sandoogStatus: st.sandoogStatus,
-    customer: a.name || (o.customer && o.customer.displayName) || '',
-    phone: a.phone || (o.customer && o.customer.phone) || o.phone || '',
+    customer: a.name || '',
+    phone: a.phone || o.phone || '',
     city: a.city || '',
     province: a.province || '',
     address: [a.address1, a.address2].filter(Boolean).join(', '),
