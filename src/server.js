@@ -58,6 +58,12 @@ app.post(
           }
 
       const orderName = shopifyOrder.name || String(shopifyOrder.order_number || shopifyOrder.id);
+          // Manual-review mode (default): do NOT auto-send. The order waits in /admin until
+          // the operator reviews it and presses Send. Set AUTO_SEND=true to restore auto-sending.
+          if (process.env.AUTO_SEND !== 'true') {
+            logger.info('Order ' + orderName + ' received - waiting for manual review in /admin (AUTO_SEND is off)');
+            return;
+          }
           const existingState = sandoogOrderState.get(orderName);
           if (existingState) {
                   logger.warn('Skipping duplicate Shopify webhook delivery for order ' + orderName + ' (already ' + existingState + ')');
@@ -133,6 +139,9 @@ app.post(
       }
     }
   );
+
+// Manual-review dashboard (password protected via ADMIN_PASSWORD).
+require('./admin').mount(app);
 
 app.listen(config.service.port, () => {
     logger.info('sandoog-shopify-integration listening on port ' + config.service.port);
