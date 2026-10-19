@@ -30,7 +30,7 @@ const CITY_CODES = new Set(CITIES.map((c) => c.code));
 // Orders created before this moment are ignored by the dashboard (they were
 // handled before the integration existed). Override with ADMIN_FROM_DATE.
 function fromDate() {
-  return process.env.ADMIN_FROM_DATE || '2026-10-18T14:00:00Z';
+  return process.env.ADMIN_FROM_DATE || '2026-10-04T09:00:00Z';
 }
 
 function centers() {
@@ -147,7 +147,7 @@ function mount(app) {
   app.get('/admin/api/orders', auth, async (_req, res) => {
     try {
       const q = `created_at:>=${fromDate()}`;
-      const data = await shopify.graphql(ORDERS_QUERY, { first: 60, q });
+      const data = await shopify.graphql(ORDERS_QUERY, { first: 100, q });
       res.set('Cache-Control', 'no-store');
       res.json({ ok: true, cities: CITIES, from: fromDate(), orders: data.orders.nodes.map(shape) });
     } catch (err) {
