@@ -84,7 +84,13 @@ function mapShopifyOrderToSandoog(shopifyOrder) {
         [customer.first_name, customer.last_name].filter(Boolean).join(' ') ||
         'Customer';
 
-  const phone = addr.phone || customer.phone || shopifyOrder.phone || '';
+  const rawPhone = addr.phone || customer.phone || shopifyOrder.phone || '';
+  // Sandoog adds its own leading 0 to the phone, so send the Iraqi local format (07xxxxxxxxx) instead of +964...
+  let phoneDigits = String(rawPhone).replace(/\D/g, '');
+  if (phoneDigits.startsWith('00964')) phoneDigits = phoneDigits.slice(5);
+  else if (phoneDigits.startsWith('964')) phoneDigits = phoneDigits.slice(3);
+  if (phoneDigits.length === 10 && phoneDigits.startsWith('7')) phoneDigits = '0' + phoneDigits;
+  const phone = phoneDigits || rawPhone;
     const city = addr.city || '';
     const province = addr.province || '';
 
