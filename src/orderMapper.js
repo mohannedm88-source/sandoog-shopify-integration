@@ -55,6 +55,16 @@ function resolveCityCode(city, province) {
     return city || province || '';
 }
 
+function lookupCityCode(candidate) {
+    const raw = loadCityCodeMap();
+    const key = normalize(candidate);
+    if (!key) return null;
+    for (const [k, v] of Object.entries(raw)) {
+        if (normalize(k) === key && v && v !== 'REPLACE_ME') return v;
+    }
+    return null;
+}
+
 function resolveDeliveryRegion(city, province) {
     const centerList = config.mapping.centerCities.map(normalize);
     const cityKey = normalize(city);
@@ -165,6 +175,7 @@ description: [li.variant_title, li.sku ? ('SKU: ' + li.sku) : ''].filter(Boolean
 module.exports = {
     mapShopifyOrderToSandoog,
     resolveCityCode,
+    lookupCityCode,
     resolveDeliveryRegion,
     isCashOnDelivery,
 };
