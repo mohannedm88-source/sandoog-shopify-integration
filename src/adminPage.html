@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sandoog Integration</title>
+<style>
+  :root { --bg:#f5f6f8; --card:#fff; --ink:#1c2230; --mute:#6b7385; --line:#e2e5ec; --brand:#1f5eff; --ok:#12805c; --warn:#b26a00; --bad:#c0392b; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#12151c; --card:#1b2029; --ink:#e8ebf2; --mute:#9aa3b5; --line:#2b3240; --brand:#6d97ff; --ok:#4cc79a; --warn:#f0b24a; --bad:#ff7b6b; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font-family:-apple-system,"Segoe UI",Tahoma,Arial,sans-serif; font-size:14px; }
+  header { position:sticky; top:0; z-index:5; background:var(--card); border-bottom:1px solid var(--line); padding:12px 16px; display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  h1 { font-size:18px; margin:0; margin-inline-end:auto; }
+  .tabs { display:flex; gap:6px; flex-wrap:wrap; }
+  button { font:inherit; cursor:pointer; border:1px solid var(--line); background:var(--card); color:var(--ink); border-radius:8px; padding:7px 12px; }
+  button.tab.active { background:var(--brand); color:#fff; border-color:var(--brand); }
+  button.send { background:var(--brand); color:#fff; border-color:var(--brand); font-weight:600; width:100%; }
+  button:disabled { opacity:.5; cursor:default; }
+  main { padding:16px; max-width:1500px; margin:0 auto; }
+  #msg { margin-bottom:12px; }
+  .banner { padding:10px 14px; border-radius:8px; border:1px solid var(--line); background:var(--card); }
+  .banner.err { border-color:var(--bad); color:var(--bad); }
+  .banner.okb { border-color:var(--ok); color:var(--ok); }
+  .grid { display:grid; gap:12px; }
+  .order { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; display:grid; grid-template-columns: 150px 1.1fr 1.4fr 1.3fr 150px; gap:14px; align-items:start; }
+  .order.warn { border-color:var(--warn); }
+  @media (max-width: 1000px) { .order { grid-template-columns: 1fr; } }
+  .num { font-weight:700; font-size:16px; }
+  .mute { color:var(--mute); font-size:12px; }
+  label { display:block; font-size:12px; color:var(--mute); margin:6px 0 3px; }
+  input, select, textarea { width:100%; font:inherit; color:var(--ink); background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:7px 9px; }
+  textarea { resize:vertical; min-height:54px; }
+  .badge { display:inline-block; padding:2px 9px; border-radius:99px; font-size:12px; border:1px solid currentColor; }
+  .badge.pending { color:var(--warn); } .badge.sent { color:var(--ok); } .badge.cancelled { color:var(--mute); }
+  .items div { padding:4px 0; border-bottom:1px dashed var(--line); } .items div:last-child { border:0; }
+  .sku { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px; direction:ltr; display:inline-block; }
+  .guess { color:var(--warn); font-size:12px; margin-top:3px; }
+  .empty { text-align:center; color:var(--mute); padding:40px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Sandoog Integration — مراجعة الطلبات</h1>
+  <div class="tabs" id="tabs"></div>
+  <button id="refresh">تحديث</button>
+</header>
+<main>
+  <div id="msg"></div>
+  <div class="grid" id="list"></div>
+</main>
+<script>
+(function () {
+  var state = { orders: [], cities: [], filter: 'pending' };
+  var TABS = [['pending', 'بانتظار الإرسال'], ['sent', 'تم الإرسال'], ['all', 'الكل']];
+
+  function el(tag, props, kids) {
+    var n = document.createElement(tag);
+    if (props) Object.keys(props).forEach(function (k) {
+      if (k === 'class') n.className = props[k];
+      else if (k === 'text') n.textContent = props[k];
+      else if (k.slice(0, 2) === 'on') n.addEventListener(k.slice(2), props[k]);
+      else n.setAttribute(k, props[k]);
+    });
+    (kids || []).forEach(function (c) { if (c) n.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
+    return n;
+  }
+  function banner(text, kind) {
+    var m = document.getElementById('msg'); m.textContent = '';
+    if (text) m.appendChild(el('div', { class: 'banner ' + (kind || ''), text: text }));
+  }
+  function fmtDate(s) {
+    try { return new Date(s).toLocaleString('ar-IQ', { dateStyle: 'medium', timeStyle: 'short' }); } catch (e) { return s; }
+  }
+  function renderTabs() {
+    var box = document.getElementById('tabs'); box.textContent = '';
+    TABS.forEach(function (t) {
+      var count = state.orders.filter(function (o) { return t[0] === 'all' || o.status === t[0]; }).length;
+      box.appendChild(el('button', { class: 'tab' + (state.filter === t[0] ? ' active' : ''), text: t[1] + ' (' + count + ')',
+        onclick: function () { state.filter = t[0]; render(); } }));
+    });
+  }
+  function card(o) {
+    var citySel = el('select', {}, [el('option', { value: '', text: '— اختر المحافظة —' })]);
+    state.cities.forEach(function (c) {
+      var op = el('option', { value: c.code, text: c.label });
+      if (c.code === o.cityCode) op.selected = true;
+      citySel.appendChild(op);
+    });
+    var region = el('select', {}, [el('option', { value: 'Center', text: 'Center (مركز)' }), el('option', { value: 'County', text: 'County (أطراف)' })]);
+    region.value = o.region;
+    citySel.addEventListener('change', function () {
+      // default region follows the governorate: Baghdad = Center, otherwise County
+      region.value = citySel.value === 'baghdad' ? 'Center' : 'County';
+    });
+    var phone = el('input', { type: 'text', value: o.phone, dir: 'ltr' });
+    var addr = el('textarea', {}); addr.value = o.address;
+    var sent = o.status !== 'pending';
+    [citySel, region, phone, addr].forEach(function (x) { x.disabled = sent; });
+    var btn = el('button', { class: 'send', text: sent ? 'تم الإرسال' : 'إرسال إلى صندوق' });
+    btn.disabled = sent;
+    btn.addEventListener('click', function () {
+      if (!citySel.value) { banner('اختر المحافظة للطلب ' + o.name, 'err'); citySel.focus(); return; }
+      if (!window.confirm('إرسال الطلب ' + o.name + ' إلى صندوق؟\nالمحافظة: ' + citySel.options[citySel.selectedIndex].text + '\nالهاتف: ' + phone.value)) return;
+      btn.disabled = true; btn.textContent = 'جارٍ الإرسال...';
+      fetch('/admin/api/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+        body: JSON.stringify({ name: o.name, city: citySel.value, region: region.value, phone: phone.value, address: addr.value }) })
+        .then(function (r) { return r.json().catch(function () { return { ok: false, error: 'HTTP ' + r.status }; }); })
+        .then(function (d) {
+          if (d.ok) { banner('تم إرسال ' + o.name + ' إلى صندوق ' + (d.sandoogId || '') + (d.warning ? ' — ' + d.warning : ''), d.warning ? 'err' : 'okb'); load(true); }
+          else { banner('فشل إرسال ' + o.name + ': ' + d.error, 'err'); btn.disabled = false; btn.textContent = 'إرسال إلى صندوق'; }
+        })
+        .catch(function (e) { banner('خطأ في الاتصال: ' + e.message, 'err'); btn.disabled = false; btn.textContent = 'إرسال إلى صندوق'; });
+    });
+
+    var left = el('div', {}, [
+      el('div', { class: 'num', text: o.name }),
+      el('div', { class: 'mute', text: fmtDate(o.createdAt) }),
+      el('div', { style: 'margin-top:8px' }, [el('span', { class: 'badge ' + o.status, text: o.status === 'pending' ? 'بانتظار الإرسال' : o.status === 'sent' ? 'أُرسل' + (o.sandoogStatus ? ' · ' + o.sandoogStatus : '') : 'ملغي' })]),
+    ]);
+    var cust = el('div', {}, [
+      el('div', { text: o.customer, style: 'font-weight:600' }),
+      el('label', { text: 'الهاتف' }), phone,
+      el('div', { class: 'mute', style: 'margin-top:6px', text: (o.cod ? 'الدفع عند الاستلام: ' : 'مدفوع: ') + o.total + ' ' + o.currency }),
+    ]);
+    var loc = el('div', {}, [
+      el('label', { text: 'المحافظة (صندوق)' }), citySel,
+      o.cityGuess === 'guess' ? el('div', { class: 'guess', text: 'تخمين تلقائي — تأكد منه' }) : null,
+      el('div', { class: 'mute', text: 'كتبها الزبون: ' + [o.city, o.province].filter(Boolean).join(' / ') }),
+      el('label', { text: 'المنطقة' }), region,
+      el('label', { text: 'العنوان' }), addr,
+    ]);
+    var items = el('div', { class: 'items' }, o.items.map(function (i) {
+      return el('div', {}, [el('div', { text: i.qty + ' × ' + i.title + (i.variant ? ' — ' + i.variant : '') }), el('span', { class: 'sku', text: i.sku || '(بدون SKU)' })]);
+    }));
+    var wrap = el('div', { class: 'order' + (o.status === 'pending' && !o.cityCode ? ' warn' : '') }, [left, cust, loc, items, el('div', {}, [btn])]);
+    return wrap;
+  }
+  function render() {
+    renderTabs();
+    var list = document.getElementById('list'); list.textContent = '';
+    var rows = state.orders.filter(function (o) { return state.filter === 'all' || o.status === state.filter; });
+    if (!rows.length) { list.appendChild(el('div', { class: 'empty', text: 'لا توجد طلبات في هذا القسم' })); return; }
+    rows.forEach(function (o) { list.appendChild(card(o)); });
+  }
+  function load(keepMsg) {
+    if (!keepMsg) banner('جارٍ التحميل...');
+    fetch('/admin/api/orders', { credentials: 'same-origin' })
+      .then(function (r) { return r.json().catch(function () { return { ok: false, error: 'HTTP ' + r.status }; }); })
+      .then(function (d) {
+        if (!d.ok) { banner(d.error, 'err'); return; }
+        if (!keepMsg) banner('');
+        state.orders = d.orders; state.cities = d.cities; render();
+      })
+      .catch(function (e) { banner('خطأ في الاتصال: ' + e.message, 'err'); });
+  }
+  document.getElementById('refresh').addEventListener('click', function () { load(false); });
+  load(false);
+})();
+</script>
+</body>
+</html>
