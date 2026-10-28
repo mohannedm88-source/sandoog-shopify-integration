@@ -87,7 +87,7 @@ const ORDERS_QUERY = `query ($first: Int!, $q: String) {
   orders(first: $first, sortKey: CREATED_AT, reverse: true, query: $q) {
     nodes {
       id name createdAt cancelledAt tags note
-      email phone paymentGatewayNames
+      email phone paymentGatewayNames displayFulfillmentStatus
       totalPriceSet { shopMoney { amount currencyCode } }
       shippingAddress { name phone city province address1 address2 }
       lineItems(first: 30) { nodes { title variantTitle sku quantity } }
@@ -107,6 +107,7 @@ function shape(o) {
     createdAt: o.createdAt,
     status: st.status,
     sandoogStatus: st.sandoogStatus,
+    fulfillment: o.displayFulfillmentStatus || '',
     customer: a.name || '',
     phone: a.phone || o.phone || '',
     city: a.city || '',
@@ -123,6 +124,31 @@ function shape(o) {
     cod,
     note: o.note || '',
   };
+}
+
+// Mark every open fulfillment order of a Shopify order as Fulfilled (no customer email).
+// Needs the write_merchant_managed_fulfillment_orders scope.
+async function fulfillSentOrder(orderGid, orderName) {
+  const data = await shopify.graphql(
+    'query ($id: ID!) { order(id: $id) { fulfillmentOrders(first: 20) { nodes { id status } } } }',
+    { id: orderGid }
+  );
+  const nodes = (data.order && data.order.fulfillmentOrders && data.order.fulfillmentOrders.nodes) || [];
+  const open = nodes.filter((f) => f.status === 'OPEN' || f.status === 'IN_PROGRESS');
+  if (!open.length) return { ok: true, already: true };
+  const r = await shopify.graphql(
+    'mutation ($f: FulfillmentInput!) { fulfillmentCreate(fulfillment: $f) { fulfillment { id status } userErrors { field message } } }',
+    {
+      f: {
+        notifyCustomer: false,
+        trackingInfo: { number: orderName, company: 'Sandoog' },
+        lineItemsByFulfillmentOrder: open.map((f) => ({ fulfillmentOrderId: f.id })),
+      },
+    }
+  );
+  const errs = r.fulfillmentCreate.userErrors || [];
+  if (errs.length) return { ok: false, error: errs.map((e) => e.message).join('; ') };
+  return { ok: true };
 }
 
 const sending = new Set();
@@ -214,12 +240,66 @@ function mount(app) {
         logger.error('Order ' + name + ' was sent to Sandoog but tagging it in Shopify failed', tagErr.message);
         return res.json({ ok: true, sandoogId: sandoogIdText, warning: 'أُرسل إلى صندوق لكن تعذر وسمه في Shopify - لا تعد الإرسال' });
       }
-      return res.json({ ok: true, sandoogId: sandoogIdText });
+      let fulfilled = false;
+      let fulfillWarning = '';
+      try {
+        const f = await fulfillSentOrder(node.id, name);
+        fulfilled = !!f.ok;
+        if (!f.ok) fulfillWarning = 'أُرسل إلى صندوق لكن تعذر تحويله إلى Fulfilled: ' + f.error;
+      } catch (fErr) {
+        logger.error('Order ' + name + ' sent to Sandoog but fulfilling it in Shopify failed', fErr.message);
+        fulfillWarning = 'أُرسل إلى صندوق لكن تعذر تحويله إلى Fulfilled: ' + String(fErr.message || fErr).slice(0, 200);
+      }
+      return res.json({ ok: true, sandoogId: sandoogIdText, fulfilled, warning: fulfillWarning || undefined });
     } catch (err) {
       logger.error('Admin: failed to send order ' + name, err.response ? err.response.data : err.message);
       return res.status(500).json({ ok: false, error: errText(err) });
     } finally {
       sending.delete(name);
+    }
+  });
+
+  // Fulfill every order that was already sent to Sandoog but is still unfulfilled in Shopify.
+  app.post('/admin/api/fulfill-sent', auth, json, async (_req, res) => {
+    try {
+      const q = `created_at:>=${fromDate()} fulfillment_status:unfulfilled status:open`;
+      const data = await shopify.graphql(
+        'query ($q: String!) { orders(first: 100, query: $q) { nodes { id name tags cancelledAt } } }',
+        { q }
+      );
+      const targets = data.orders.nodes.filter((o) => !o.cancelledAt && statusOf(o).status === 'sent');
+      const done = [];
+      const failed = [];
+      for (const o of targets) {
+        try {
+          const f = await fulfillSentOrder(o.id, o.name);
+          if (f.ok) done.push(o.name); else failed.push(o.name + ': ' + f.error);
+        } catch (e) {
+          failed.push(o.name + ': ' + String(e.message || e).slice(0, 160));
+        }
+      }
+      logger.info('Admin: fulfilled ' + done.length + ' sent order(s) in Shopify', { done, failed });
+      res.json({ ok: true, done, failed });
+    } catch (err) {
+      logger.error('Admin: fulfill-sent failed', err.response ? err.response.data : err.message);
+      res.status(500).json({ ok: false, error: errText(err) });
+    }
+  });
+
+  // Register this service's status callback URL with Sandoog (uses the server-side secret; nothing is shown).
+  app.post('/admin/api/register-webhook', auth, json, async (_req, res) => {
+    try {
+      const base = String(config.service.publicBaseUrl || '').replace(/\/+$/, '');
+      if (!base || !config.sandoog.callbackSecret) {
+        return res.status(500).json({ ok: false, error: 'PUBLIC_BASE_URL أو SANDOOG_CALLBACK_SECRET غير مضبوط' });
+      }
+      const url = base + '/webhooks/sandoog/order-status';
+      const r = await sandoog.registerWebhook({ callbackKey: config.sandoog.callbackSecret, orderUrl: url });
+      logger.info('Admin: registered Sandoog status webhook', { url, response: r });
+      res.json({ ok: true, url });
+    } catch (err) {
+      logger.error('Admin: register-webhook failed', err.response ? err.response.data : err.message);
+      res.status(500).json({ ok: false, error: errText(err) });
     }
   });
 }
