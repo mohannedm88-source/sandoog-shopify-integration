@@ -43,6 +43,8 @@
   <h1>Sandoog Integration — مراجعة الطلبات</h1>
   <div class="tabs" id="tabs"></div>
   <button id="refresh">تحديث</button>
+  <button id="fulfillAll" title="يحوّل الطلبات المرسلة لصندوق والتي ما زالت Unfulfilled إلى Fulfilled">تحويل المرسَل إلى Fulfilled</button>
+  <button id="regHook" title="يسجّل رابط استقبال حالات الطلبات من صندوق (مرة واحدة)">تفعيل مزامنة الحالات</button>
 </header>
 <main>
   <div id="msg"></div>
@@ -79,6 +81,20 @@
         onclick: function () { state.filter = t[0]; render(); } }));
     });
   }
+  var STATUS_AR = { Requested: 'مطلوب', Placed: 'تم الاستلام', PickedUp: 'تم الاستلام من المخزن', ForPacking: 'بانتظار التعبئة', Packed: 'تمت التعبئة', OnDelivery: 'قيد التوصيل', Delivered: 'تم التسليم', Complete: 'مكتمل', ResolutionRequired: 'يحتاج معالجة', ResolutionResolved: 'تمت المعالجة', SemiDelivered: 'تسليم جزئي', SemiFailed: 'فشل جزئي', ToReturn: 'قيد الإرجاع', Returned: 'مرتجع', Failed: 'فشل التوصيل', Cancelled: 'ملغي' };
+  function statusText(o) {
+    if (o.status === 'pending') return 'بانتظار الإرسال';
+    if (o.status === 'cancelled') return 'ملغي';
+    var t = 'أُرسل';
+    if (o.sandoogStatus) t += ' · ' + (STATUS_AR[o.sandoogStatus] || o.sandoogStatus);
+    if (o.fulfillment === 'FULFILLED') t += ' · Fulfilled';
+    else if (o.fulfillment) t += ' · غير مُنفَّذ (Unfulfilled)';
+    return t;
+  }
+  function post(url) {
+    return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: '{}' })
+      .then(function (r) { return r.json().catch(function () { return { ok: false, error: 'HTTP ' + r.status }; }); });
+  }
   function card(o) {
     var citySel = el('select', {}, [el('option', { value: '', text: '— اختر المحافظة —' })]);
     state.cities.forEach(function (c) {
@@ -106,7 +122,7 @@
         body: JSON.stringify({ name: o.name, city: citySel.value, region: region.value, phone: phone.value, address: addr.value }) })
         .then(function (r) { return r.json().catch(function () { return { ok: false, error: 'HTTP ' + r.status }; }); })
         .then(function (d) {
-          if (d.ok) { banner('تم إرسال ' + o.name + ' إلى صندوق ' + (d.sandoogId || '') + (d.warning ? ' — ' + d.warning : ''), d.warning ? 'err' : 'okb'); load(true); }
+          if (d.ok) { banner('تم إرسال ' + o.name + ' إلى صندوق ' + (d.sandoogId || '') + (d.warning ? ' — ' + d.warning : (d.fulfilled ? ' — وصار Fulfilled في Shopify' : '')), d.warning ? 'err' : 'okb'); load(true); }
           else { banner('فشل إرسال ' + o.name + ': ' + d.error, 'err'); btn.disabled = false; btn.textContent = 'إرسال إلى صندوق'; }
         })
         .catch(function (e) { banner('خطأ في الاتصال: ' + e.message, 'err'); btn.disabled = false; btn.textContent = 'إرسال إلى صندوق'; });
@@ -115,7 +131,7 @@
     var left = el('div', {}, [
       el('div', { class: 'num', text: o.name }),
       el('div', { class: 'mute', text: fmtDate(o.createdAt) }),
-      el('div', { style: 'margin-top:8px' }, [el('span', { class: 'badge ' + o.status, text: o.status === 'pending' ? 'بانتظار الإرسال' : o.status === 'sent' ? 'أُرسل' + (o.sandoogStatus ? ' · ' + o.sandoogStatus : '') : 'ملغي' })]),
+      el('div', { style: 'margin-top:8px' }, [el('span', { class: 'badge ' + o.status, text: statusText(o) })]),
     ]);
     var cust = el('div', {}, [
       el('div', { text: o.customer, style: 'font-weight:600' }),
@@ -154,6 +170,23 @@
       .catch(function (e) { banner('خطأ في الاتصال: ' + e.message, 'err'); });
   }
   document.getElementById('refresh').addEventListener('click', function () { load(false); });
+  document.getElementById('fulfillAll').addEventListener('click', function () {
+    if (!window.confirm('تحويل كل الطلبات المرسلة لصندوق (والتي ما زالت Unfulfilled) إلى Fulfilled في Shopify؟ بدون إرسال إيميل للزبائن.')) return;
+    banner('جارٍ التحويل...');
+    post('/admin/api/fulfill-sent').then(function (d) {
+      if (!d.ok) { banner('فشل: ' + d.error, 'err'); return; }
+      var msg = 'تم تحويل ' + d.done.length + ' طلب إلى Fulfilled' + (d.done.length ? ': ' + d.done.join('، ') : '');
+      if (d.failed.length) msg += ' — تعذر: ' + d.failed.join(' | ');
+      banner(msg, d.failed.length ? 'err' : 'okb'); load(true);
+    }).catch(function (e) { banner('خطأ في الاتصال: ' + e.message, 'err'); });
+  });
+  document.getElementById('regHook').addEventListener('click', function () {
+    if (!window.confirm('تسجيل رابط استقبال حالات الطلبات من صندوق؟')) return;
+    banner('جارٍ التسجيل...');
+    post('/admin/api/register-webhook').then(function (d) {
+      banner(d.ok ? 'تم تفعيل مزامنة الحالات من صندوق' : 'فشل التسجيل: ' + d.error, d.ok ? 'okb' : 'err');
+    }).catch(function (e) { banner('خطأ في الاتصال: ' + e.message, 'err'); });
+  });
   load(false);
 })();
 </script>
