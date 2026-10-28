@@ -7,7 +7,7 @@ const logger = require('./logger');
 const sandoog = require('./sandoogClient');
 const shopify = require('./shopifyClient');
 const { mapShopifyOrderToSandoog, lookupCityCode } = require('./orderMapper');
-const { resolveSandoogProductIds } = require('./productResolver');
+const { resolveSandoogProductIds, normSku } = require('./productResolver');
 
 // Manual-review dashboard: lists recent Shopify orders, lets the operator fix
 // the governorate / phone / address, then sends the order to Sandoog.
@@ -73,6 +73,16 @@ function guessCity(city, province, address1, address2) {
   return { code: '', how: '' };
 }
 
+// Exchange / return orders created from the dashboard are recorded on the original order as tags.
+function exchangeOf(o) {
+  const tags = o.tags || [];
+  const kinds = [];
+  if (tags.includes('sandoog-exchange')) kinds.push('exchange');
+  if (tags.includes('sandoog-return')) kinds.push('return');
+  const st = tags.find((t) => /^sandoog-ex:/i.test(t));
+  return { kinds, status: st ? st.slice(11) : '' };
+}
+
 function statusOf(o) {
   const tags = o.tags || [];
   const sandoogStatusTag = tags.find((t) => /^sandoog:/i.test(t));
@@ -90,7 +100,7 @@ const ORDERS_QUERY = `query ($first: Int!, $q: String) {
       email phone paymentGatewayNames displayFulfillmentStatus
       totalPriceSet { shopMoney { amount currencyCode } }
       shippingAddress { name phone city province address1 address2 }
-      lineItems(first: 30) { nodes { title variantTitle sku quantity } }
+      lineItems(first: 30) { nodes { title variantTitle sku quantity currentQuantity } }
     }
   }
 }`;
@@ -116,8 +126,11 @@ function shape(o) {
     cityCode: g.code,
     cityGuess: g.how,
     region,
-    items: ((o.lineItems && o.lineItems.nodes) || []).map((l) => ({
-      title: l.title, variant: l.variantTitle || '', sku: l.sku || '', qty: l.quantity,
+    exchange: exchangeOf(o),
+    items: ((o.lineItems && o.lineItems.nodes) || [])
+      .filter((l) => typeof l.currentQuantity !== 'number' || l.currentQuantity > 0)
+      .map((l) => ({
+      title: l.title, variant: l.variantTitle || '', sku: l.sku || '', qty: typeof l.currentQuantity === 'number' ? l.currentQuantity : l.quantity,
     })),
     total: o.totalPriceSet ? o.totalPriceSet.shopMoney.amount : '',
     currency: o.totalPriceSet ? o.totalPriceSet.shopMoney.currencyCode : '',
@@ -152,6 +165,13 @@ async function fulfillSentOrder(orderGid, orderName) {
 }
 
 const sending = new Set();
+
+// Shopify order edits: use the current quantity and drop removed lines.
+function currentLines(rest) {
+  return (rest.line_items || [])
+    .filter((li) => typeof li.current_quantity !== 'number' || li.current_quantity > 0)
+    .map((li) => (typeof li.current_quantity === 'number' ? Object.assign({}, li, { quantity: li.current_quantity }) : li));
+}
 
 function errText(err) {
   if (err && err.response && err.response.data) {
@@ -206,6 +226,7 @@ function mount(app) {
       const rest = await shopify.getOrderRestByName(name);
       if (!rest) return res.status(404).json({ ok: false, error: 'تعذر تحميل تفاصيل الطلب من Shopify' });
 
+      rest.line_items = currentLines(rest);
       const base = rest.shipping_address || rest.billing_address || {};
       rest.shipping_address = Object.assign({}, base, {
         phone,
@@ -256,6 +277,113 @@ function mount(app) {
       return res.status(500).json({ ok: false, error: errText(err) });
     } finally {
       sending.delete(name);
+    }
+  });
+
+  // Exchange / return: create a NEW Sandoog order linked to the original one (own delivery fee).
+  app.post('/admin/api/exchange', auth, json, async (req, res) => {
+    const b = req.body || {};
+    const name = String(b.name || '').trim();
+    const kind = b.kind === 'return' ? 'return' : 'exchange';
+    const code = String(b.city || '').trim();
+    const phone = String(b.phone || '').trim();
+    const address = String(b.address || '').trim();
+    const amount = Math.max(0, Math.round(Number(b.amount) || 0));
+    const clean = (arr) => (Array.isArray(arr) ? arr : [])
+      .map((x) => ({
+        sku: String((x && x.sku) || '').trim(),
+        qty: Math.min(50, Math.max(1, parseInt(x && x.qty, 10) || 1)),
+        title: String((x && x.title) || '').trim().slice(0, 80),
+      }))
+      .filter((x) => x.sku);
+    const takeBack = clean(b.takeBack);
+    const newItems = kind === 'exchange' ? clean(b.newItems) : [];
+    if (!name) return res.status(400).json({ ok: false, error: 'Missing order name' });
+    if (!CITY_CODES.has(code)) return res.status(400).json({ ok: false, error: 'اختر المحافظة من القائمة' });
+    if (!phone) return res.status(400).json({ ok: false, error: 'رقم الهاتف فارغ' });
+    if (!takeBack.length) return res.status(400).json({ ok: false, error: 'اختر القطع اللي رح تنستلم من الزبون' });
+    if (kind === 'exchange' && !newItems.length) return res.status(400).json({ ok: false, error: 'أضف القطعة الجديدة (SKU) للتبديل' });
+    const lockKey = name + '#ex';
+    if (sending.has(lockKey)) return res.status(409).json({ ok: false, error: 'طلب التبديل/الاسترجاع قيد الإرسال الآن' });
+    sending.add(lockKey);
+    try {
+      const found = await shopify.graphql(
+        'query ($q: String!) { orders(first: 1, query: $q) { nodes { id name tags note cancelledAt } } }',
+        { q: 'name:' + name }
+      );
+      const node = found.orders.nodes[0];
+      if (!node || node.name !== name) return res.status(404).json({ ok: false, error: 'الطلب غير موجود في Shopify' });
+      if (statusOf(node).status !== 'sent') return res.status(409).json({ ok: false, error: 'هذا الطلب لم يُرسل إلى صندوق أصلاً' });
+
+      const rest = await shopify.getOrderRestByName(name);
+      if (!rest) return res.status(404).json({ ok: false, error: 'تعذر تحميل تفاصيل الطلب من Shopify' });
+      const lines = currentLines(rest);
+      for (const t of takeBack) {
+        const l = lines.find((x) => normSku(x.sku) === normSku(t.sku));
+        if (!l) return res.status(400).json({ ok: false, error: 'القطعة ' + t.sku + ' ليست ضمن الطلب الأصلي' });
+        if (t.qty > (l.quantity || 1)) return res.status(400).json({ ok: false, error: 'الكمية المسترجعة أكبر من الأصلية للقطعة ' + t.sku });
+      }
+
+      const base = rest.shipping_address || rest.billing_address || {};
+      rest.line_items = lines;
+      rest.shipping_address = Object.assign({}, base, { phone, address1: address || base.address1 || '', address2: address ? '' : base.address2 || '' });
+
+      const prefix = kind === 'exchange' ? '-EX' : '-RT';
+      const used = (node.note || '').match(new RegExp(name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + prefix + '\\d*', 'g')) || [];
+      const ref = name + prefix + (used.length ? String(new Set(used).size + 1) : '');
+
+      const label = (x) => (x.title ? x.title + ' ' : '') + '(' + x.sku + ') x' + x.qty;
+      const notes = (kind === 'exchange' ? 'تبديل' : 'استرجاع') + ' للطلب ' + name + ' - استلام من الزبون وإعادته للمخزن: '
+        + takeBack.map(label).join('، ')
+        + (kind === 'exchange' ? ' - وتسليم القطع الجديدة: ' + newItems.map(label).join('، ') : ' - لا يوجد تسليم منتجات')
+        + (amount ? ' - المبلغ المطلوب من الزبون: ' + amount + ' د.ع' : ' - لا يوجد مبلغ مطلوب من الزبون');
+
+      const orderPost = mapShopifyOrderToSandoog(rest);
+      orderPost.external_reference = ref;
+      orderPost.notes = notes;
+      orderPost.customer.state = code;
+      orderPost.delivery.delivery_region = b.region === 'Center' || b.region === 'County'
+        ? b.region
+        : (centers().includes(code) ? 'Center' : 'County');
+      orderPost.delivery.delivery_items = newItems.map((i, idx) => ({
+        id: idx + 1, name: i.title || i.sku, description: 'SKU: ' + i.sku, quantity: i.qty,
+      }));
+      orderPost.payment = {
+        total_price: amount,
+        payment_charge_type: 'Customer',
+        amount_include_delivery_charge: true,
+        lines: [{ type: 'Cash', value: amount, currency: 'IraqDinar', is_paid: amount === 0 }],
+      };
+      if (newItems.length) {
+        await resolveSandoogProductIds(orderPost, { line_items: newItems.map((i) => ({ sku: i.sku })) });
+      }
+
+      logger.info('Admin: sending Sandoog ' + kind + ' order ' + ref + ': ' + JSON.stringify(orderPost));
+      const result = await sandoog.createOrder(orderPost);
+      logger.info('Sandoog accepted ' + kind + ' order ' + ref + ' (manual)', result);
+      const sid = typeof result === 'string' ? result : ((result && (result.id || (result.data && (result.data.id || result.data)))) || '');
+      const sidText = typeof sid === 'string' ? sid : JSON.stringify(sid);
+
+      try {
+        await shopify.graphql(
+          'mutation ($id: ID!, $tags: [String!]!) { tagsAdd(id: $id, tags: $tags) { userErrors { field message } } }',
+          { id: node.id, tags: [kind === 'exchange' ? 'sandoog-exchange' : 'sandoog-return'] }
+        );
+        const line = `[Sandoog] ${new Date().toISOString()} ${kind} order ${ref} created ${sidText}`.trim();
+        await shopify.graphql(
+          'mutation ($input: OrderInput!) { orderUpdate(input: $input) { userErrors { field message } } }',
+          { input: { id: node.id, note: node.note ? node.note + '\n' + line : line } }
+        );
+      } catch (tagErr) {
+        logger.error('Exchange order ' + ref + ' was created in Sandoog but tagging the Shopify order failed', tagErr.message);
+        return res.json({ ok: true, ref, sandoogId: sidText, warning: 'أُنشئ الطلب في صندوق لكن تعذر وسم الطلب الأصلي في Shopify - لا تعد الإنشاء' });
+      }
+      return res.json({ ok: true, ref, sandoogId: sidText });
+    } catch (err) {
+      logger.error('Admin: failed to create ' + kind + ' order for ' + name, err.response ? err.response.data : err.message);
+      return res.status(500).json({ ok: false, error: errText(err) });
+    } finally {
+      sending.delete(lockKey);
     }
   });
 
