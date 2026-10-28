@@ -158,7 +158,7 @@ async function getOrderRestByName(name) {
 async function findOrderByName(name) {
         const query = `
             query FindOrder($q: String!) {
-                  orders(first: 1, query: $q) {
+                  orders(first: 5, query: $q) {
                           edges {
                                     node {
                                                 id
@@ -173,9 +173,11 @@ async function findOrderByName(name) {
                                                                                                                                                   }
                                                                                                                                                       }
                                                                                                                                                         `;
-        const q = name.startsWith('#') ? `name:'${name}'` : `name:'#${name}'`;
+        // This store's order names look like "Q1720" (custom prefix, no '#'), so search by the bare name.
+        const bare = String(name).replace(/^#/, '');
+        const q = `name:${bare}`;
         const data = await graphql(query, { q });
-        const edge = data.orders.edges[0];
+        const edge = (data.orders.edges || []).find((e) => String(e.node.name).replace(/^#/, '').toLowerCase() === bare.toLowerCase());
         if (!edge) return null;
         const node = edge.node;
         return {
@@ -190,30 +192,33 @@ async function findOrderByName(name) {
         };
 }
 
-/** Replace any previous `sandoog:*` tag with the current status, and append a note line. */
-async function syncSandoogStatus(order, eventType, extraNoteLine) {
-        const keptTags = order.tags.filter((t) => !t.toLowerCase().startsWith('sandoog:'));
-        const newTags = [...keptTags, `sandoog:${eventType}`];
+/**
+ * Replace any previous `<prefix>*` tag (default `sandoog:`) with the current status, and append a note line.
+ * Exchange/return orders pass prefix `sandoog-ex:` so they never overwrite the original order's status tag.
+ */
+async function syncSandoogStatus(order, eventType, extraNoteLine, opts = {}) {
+        const prefix = opts.prefix || 'sandoog:';
+        const label = opts.label || 'Sandoog';
+        const newTag = `${prefix}${eventType}`;
+        const oldTags = order.tags.filter((t) => t.toLowerCase().startsWith(prefix) && t !== newTag);
+        const newTags = [...order.tags.filter((t) => !oldTags.includes(t) && t !== newTag), newTag];
 
   await graphql(
             `mutation SetTags($id: ID!, $tags: [String!]!) {
                   tagsAdd(id: $id, tags: $tags) { userErrors { field message } }
                       }`,
-        { id: order.id, tags: [`sandoog:${eventType}`] }
+        { id: order.id, tags: [newTag] }
           );
-        if (keptTags.length !== order.tags.length) {
-                  const oldSandoogTags = order.tags.filter((t) => t.toLowerCase().startsWith('sandoog:'));
-                  if (oldSandoogTags.length) {
-                              await graphql(
-                                            `mutation RemoveTags($id: ID!, $tags: [String!]!) {
-                                                      tagsRemove(id: $id, tags: $tags) { userErrors { field message } }
-                                                              }`,
-                                    { id: order.id, tags: oldSandoogTags }
-                                          );
-                  }
+        if (oldTags.length) {
+                  await graphql(
+                              `mutation RemoveTags($id: ID!, $tags: [String!]!) {
+                                        tagsRemove(id: $id, tags: $tags) { userErrors { field message } }
+                                                }`,
+                      { id: order.id, tags: oldTags }
+                            );
         }
 
-  const line = `[Sandoog] ${new Date().toISOString()} ${eventType}${extraNoteLine ? ' — ' + extraNoteLine : ''}`;
+  const line = `[${label}] ${new Date().toISOString()} ${eventType}${extraNoteLine ? ' — ' + extraNoteLine : ''}`;
         const note = order.note ? `${order.note}\n${line}` : line;
         await graphql(
                   `mutation SetNote($input: OrderInput!) {
