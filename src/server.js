@@ -116,7 +116,9 @@ app.post(
       }
 
       try {
-              const order = await shopify.findOrderByName(externalReference);
+              // Exchange/return orders are sent with external_reference "<order>-EX[n]" / "<order>-RT[n]".
+              const exm = /^(.+?)-(EX|RT)\d*$/i.exec(String(externalReference));
+              const order = await shopify.findOrderByName(exm ? exm[1] : externalReference);
               if (!order) {
                         logger.warn('No Shopify order found matching external_reference "' + externalReference + '"');
                         return;
@@ -125,6 +127,11 @@ app.post(
             const driverNote = eventData && eventData.driver_data
                 ? ('driver: ' + (eventData.driver_data.driver_name || '') + ' ' + (eventData.driver_data.driver_phone || '')).trim()
                       : undefined;
+
+            if (exm) {
+                      await shopify.syncSandoogStatus(order, eventType, driverNote, { prefix: 'sandoog-ex:', label: 'Sandoog ' + externalReference });
+                      return;
+            }
 
             await shopify.syncSandoogStatus(order, eventType, driverNote);
 
