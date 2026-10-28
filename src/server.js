@@ -135,6 +135,15 @@ app.post(
 
             await shopify.syncSandoogStatus(order, eventType, driverNote);
 
+            if (eventType === 'Returned') {
+                      try {
+                                const r = await require('./shopifyReturns').returnOrder(order.id);
+                                logger.info('Shopify return for ' + order.name + ': ' + JSON.stringify(r));
+                      } catch (retErr) {
+                                logger.error('Failed to create a Shopify return for ' + order.name, retErr.message);
+                      }
+            }
+
             if (FULFILLED_EVENT_TYPES.has(eventType)) {
                       await shopify.fulfillOrder(order);
             }
