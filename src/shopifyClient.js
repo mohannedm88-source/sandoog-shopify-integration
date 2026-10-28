@@ -97,6 +97,13 @@ async function graphql(query, variables) {
                               throw err;
                   }
         }
+        const denied = (r) => Array.isArray(r.data.errors) && r.data.errors.some((e) => e && e.extensions && e.extensions.code === 'ACCESS_DENIED');
+        if (res.data.errors && denied(res)) {
+                  // Scopes may have changed since this token was issued — fetch a fresh token and retry once.
+                  cachedShopifyToken = null;
+                  const retryApi = await adminApi();
+                  res = await retryApi.post('/graphql.json', { query, variables });
+        }
         if (res.data.errors) {
                   throw new Error('Shopify GraphQL error: ' + JSON.stringify(res.data.errors));
         }
