@@ -105,7 +105,7 @@ app.post(
 
       res.status(200).send('ok');
 
-      const eventType = (req.body || {}).event_type;
+      const eventType = String((req.body || {}).event_type || '').trim();
           const externalReference = (req.body || {}).external_reference;
           const eventData = (req.body || {}).event_data;
           logger.info('Sandoog status update: ' + eventType + ' for order ' + externalReference, eventData);
