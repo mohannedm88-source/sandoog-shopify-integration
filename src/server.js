@@ -135,6 +135,15 @@ app.post(
 
             await shopify.syncSandoogStatus(order, eventType, driverNote);
 
+            if (require('./shopifyPayments').isBalanceUpdated(eventType)) {
+                      try {
+                                const r = await require('./shopifyPayments').markOrderPaid(order.id);
+                                logger.info('Shopify mark-as-paid for ' + order.name + ': ' + JSON.stringify(r));
+                      } catch (payErr) {
+                                logger.error('Failed to mark ' + order.name + ' as paid in Shopify', payErr.message);
+                      }
+            }
+
             if (eventType === 'Returned') {
                       try {
                                 const r = await require('./shopifyReturns').returnOrder(order.id);
