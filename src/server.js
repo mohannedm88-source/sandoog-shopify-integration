@@ -135,7 +135,7 @@ app.post(
 
             await shopify.syncSandoogStatus(order, eventType, driverNote);
 
-            if (require('./shopifyPayments').isBalanceUpdated(eventType)) {
+            if (eventType === 'Complete' || require('./shopifyPayments').isBalanceUpdated(eventType)) {
                       try {
                                 const r = await require('./shopifyPayments').markOrderPaid(order.id);
                                 logger.info('Shopify mark-as-paid for ' + order.name + ': ' + JSON.stringify(r));
