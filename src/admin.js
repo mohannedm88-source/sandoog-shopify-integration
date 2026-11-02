@@ -414,6 +414,32 @@ function mount(app) {
     }
   });
 
+  // Mark as paid every open order whose Sandoog status is Complete (cash collected) but is still unpaid in Shopify.
+  app.post('/admin/api/mark-paid-complete', auth, json, async (_req, res) => {
+    try {
+      const q = `created_at:>=${fromDate()} tag:'sandoog:Complete' financial_status:pending`;
+      const data = await shopify.graphql(
+        'query ($q: String!) { orders(first: 100, query: $q) { nodes { id name tags cancelledAt } } }',
+        { q }
+      );
+      const done = [];
+      const failed = [];
+      for (const o of data.orders.nodes.filter((x) => !x.cancelledAt)) {
+        try {
+          const r = await require('./shopifyPayments').markOrderPaid(o.id);
+          if (r.ok) done.push(o.name); else failed.push(o.name + ': ' + r.error);
+        } catch (e) {
+          failed.push(o.name + ': ' + String(e.message || e).slice(0, 160));
+        }
+      }
+      logger.info('Admin: marked ' + done.length + ' completed order(s) as paid in Shopify', { done, failed });
+      res.json({ ok: true, done, failed });
+    } catch (err) {
+      logger.error('Admin: mark-paid-complete failed', err.response ? err.response.data : err.message);
+      res.status(500).json({ ok: false, error: errText(err) });
+    }
+  });
+
   // Register this service's status callback URL with Sandoog (uses the server-side secret; nothing is shown).
   app.post('/admin/api/register-webhook', auth, json, async (_req, res) => {
     try {
