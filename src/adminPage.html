@@ -47,6 +47,7 @@
   <div class="tabs" id="tabs"></div>
   <button id="refresh">تحديث</button>
   <button id="fulfillAll" title="يحوّل الطلبات المرسلة لصندوق والتي ما زالت Unfulfilled إلى Fulfilled">تحويل المرسَل إلى Fulfilled</button>
+  <button id="paidAll" title="يضع Paid للطلبات التي حالتها Complete في صندوق وما زالت Pending في Shopify">تحويل المكتمل إلى Paid</button>
   <button id="regHook" title="يسجّل رابط استقبال حالات الطلبات من صندوق (مرة واحدة)">تفعيل مزامنة الحالات</button>
 </header>
 <main>
@@ -252,6 +253,16 @@
     post('/admin/api/fulfill-sent').then(function (d) {
       if (!d.ok) { banner('فشل: ' + d.error, 'err'); return; }
       var msg = 'تم تحويل ' + d.done.length + ' طلب إلى Fulfilled' + (d.done.length ? ': ' + d.done.join('، ') : '');
+      if (d.failed.length) msg += ' — تعذر: ' + d.failed.join(' | ');
+      banner(msg, d.failed.length ? 'err' : 'okb'); load(true);
+    }).catch(function (e) { banner('خطأ في الاتصال: ' + e.message, 'err'); });
+  });
+  document.getElementById('paidAll').addEventListener('click', function () {
+    if (!window.confirm('وضع Paid في Shopify لكل الطلبات التي حالتها Complete في صندوق وما زالت غير مدفوعة؟')) return;
+    banner('جارٍ التحويل...');
+    post('/admin/api/mark-paid-complete').then(function (d) {
+      if (!d.ok) { banner('فشل: ' + d.error, 'err'); return; }
+      var msg = 'تم وضع ' + d.done.length + ' طلب كـ Paid' + (d.done.length ? ': ' + d.done.join('، ') : '');
       if (d.failed.length) msg += ' — تعذر: ' + d.failed.join(' | ');
       banner(msg, d.failed.length ? 'err' : 'okb'); load(true);
     }).catch(function (e) { banner('خطأ في الاتصال: ' + e.message, 'err'); });
