@@ -399,6 +399,17 @@ function mount(app) {
     if (!name) return res.status(400).json({ ok: false, error: 'Missing order name' });
     if (!CITY_CODES.has(code)) return res.status(400).json({ ok: false, error: 'اختر المحافظة من القائمة' });
     if (!phone) return res.status(400).json({ ok: false, error: 'رقم الهاتف فارغ' });
+    const amount = (b.amount === undefined || b.amount === null || b.amount === '') ? null : Math.max(0, Math.round(Number(b.amount) || 0));
+    const editItems = Array.isArray(b.items)
+      ? b.items
+        .map((x) => ({
+          sku: String((x && x.sku) || '').trim(),
+          title: String((x && x.title) || '').trim().slice(0, 80),
+          qty: Math.min(50, Math.max(0, parseInt(x && x.qty, 10) || 0)),
+        }))
+        .filter((x) => (x.sku || x.title) && x.qty > 0)
+      : null;
+    if (editItems && !editItems.length) return res.status(400).json({ ok: false, error: 'لازم يبقى قطعة وحدة على الأقل في الطلب' });
     const lockKey = name + '#rs';
     if (sending.has(lockKey)) return res.status(409).json({ ok: false, error: 'إعادة الإرسال قيد التنفيذ الآن' });
     sending.add(lockKey);
@@ -414,7 +425,24 @@ function mount(app) {
 
       const rest = await shopify.getOrderRestByName(name);
       if (!rest) return res.status(404).json({ ok: false, error: 'تعذر تحميل تفاصيل الطلب من Shopify' });
-      rest.line_items = currentLines(rest);
+      const origLines = currentLines(rest);
+      let editSummary = '';
+      if (editItems) {
+        const lineKey = (sku, title) => (sku ? 'sku:' + normSku(sku) : 'title:' + String(title || '').trim().toLowerCase());
+        const edited = editItems.map((it) => {
+          const orig = origLines.find((l) => lineKey(l.sku, l.title) === lineKey(it.sku, it.title));
+          if (orig) return Object.assign({}, orig, { quantity: it.qty });
+          return { title: it.title || it.sku, sku: it.sku, variant_title: '', quantity: it.qty };
+        });
+        const same = edited.length === origLines.length && edited.every((l) => {
+          const o = origLines.find((x) => lineKey(x.sku, x.title) === lineKey(l.sku, l.title));
+          return o && o.quantity === l.quantity;
+        });
+        rest.line_items = edited;
+        if (!same) editSummary = 'القطع بعد التعديل: ' + edited.map((l) => (l.title || l.sku) + (l.variant_title ? ' ' + l.variant_title : '') + ' x' + l.quantity).join('، ');
+      } else {
+        rest.line_items = origLines;
+      }
       const base = rest.shipping_address || rest.billing_address || {};
       rest.shipping_address = Object.assign({}, base, { phone, address1: address || base.address1 || '', address2: address ? '' : base.address2 || '' });
 
@@ -424,12 +452,23 @@ function mount(app) {
 
       const orderPost = mapShopifyOrderToSandoog(rest);
       orderPost.external_reference = ref;
-      orderPost.notes = 'إعادة إرسال للطلب ' + name + ' (رجع ولسا الزبون بدو الطلب) - نفس القطع ونفس المبلغ، أجور التوصيل على الشركة. ' + (orderPost.notes || '');
+      const origTotal = Math.round(Number(rest.current_total_price || rest.total_price || 0));
+      if (amount !== null && amount !== origTotal) editSummary += (editSummary ? ' | ' : '') + 'المبلغ المطلوب: ' + amount + ' د.ع (كان ' + origTotal + ')';
+      orderPost.notes = 'إعادة إرسال للطلب ' + name + ' (رجع ولسا الزبون بدو الطلب) - أجور التوصيل على الشركة. '
+        + (editSummary ? 'تعديل عند إعادة الإرسال: ' + editSummary + '. ' : 'نفس القطع ونفس المبلغ. ')
+        + (orderPost.notes || '');
       orderPost.customer.state = code;
       orderPost.delivery.delivery_region = b.region === 'Center' || b.region === 'County'
         ? b.region
         : (centers().includes(code) ? 'Center' : 'County');
       await resolveSandoogProductIds(orderPost, rest);
+      if (amount !== null) {
+        orderPost.payment.total_price = amount;
+        if (orderPost.payment.lines && orderPost.payment.lines[0]) {
+          orderPost.payment.lines[0].value = amount;
+          if (orderPost.payment.lines[0].type === 'Cash') orderPost.payment.lines[0].is_paid = amount === 0;
+        }
+      }
 
       logger.info('Admin: sending Sandoog resend order ' + ref + ': ' + JSON.stringify(orderPost));
       const result = await sandoog.createOrder(orderPost);
@@ -444,7 +483,7 @@ function mount(app) {
           'mutation ($id: ID!, $tags: [String!]!) { tagsAdd(id: $id, tags: $tags) { userErrors { field message } } }',
           { id: node.id, tags: ['sandoog-resent'] }
         );
-        const line = `[Sandoog] ${new Date().toISOString()} resend order ${ref} created ${sidText}`.trim();
+        const line = `[Sandoog] ${new Date().toISOString()} resend order ${ref} created ${sidText}${editSummary ? ' | ' + editSummary : ''}`.trim();
         await shopify.graphql(
           'mutation ($input: OrderInput!) { orderUpdate(input: $input) { userErrors { field message } } }',
           { input: { id: node.id, note: node.note ? node.note + '\n' + line : line } }
