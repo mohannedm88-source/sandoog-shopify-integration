@@ -99,6 +99,37 @@
     return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: '{}' })
       .then(function (r) { return r.json().catch(function () { return { ok: false, error: 'HTTP ' + r.status }; }); });
   }
+  function resendPanel(o, citySel0, region0, phone0, addr0, onDone) {
+    var city = el('select', {}, [el('option', { value: '', text: '— اختر المحافظة —' })]);
+    state.cities.forEach(function (c) { var op = el('option', { value: c.code, text: c.label }); if (c.code === citySel0.value) op.selected = true; city.appendChild(op); });
+    var region = el('select', {}, [el('option', { value: 'Center', text: 'Center (مركز)' }), el('option', { value: 'County', text: 'County (أطراف)' })]);
+    region.value = region0.value;
+    city.addEventListener('change', function () { region.value = city.value === 'baghdad' ? 'Center' : 'County'; });
+    var phone = el('input', { type: 'text', value: phone0.value, dir: 'ltr' });
+    var addr = el('textarea', {}); addr.value = addr0.value;
+    var go = el('button', { class: 'send', text: 'إعادة الإرسال إلى صندوق' });
+    var cancel = el('button', { text: 'إغلاق', onclick: function () { onDone(false); } });
+    go.addEventListener('click', function () {
+      if (!city.value) { banner('اختر المحافظة', 'err'); return; }
+      if (!window.confirm('إعادة إرسال الطلب ' + o.name + ' إلى صندوق كطلب جديد بنفس القطع ونفس المبلغ؟\nأجور التوصيل الجديدة على الشركة.\nلن يُنشأ مرتجع ولن يتغير المخزون في Shopify.')) return;
+      go.disabled = true; go.textContent = 'جارٍ الإرسال...';
+      fetch('/admin/api/resend', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+        body: JSON.stringify({ name: o.name, city: city.value, region: region.value, phone: phone.value, address: addr.value }) })
+        .then(function (r) { return r.json().catch(function () { return { ok: false, error: 'HTTP ' + r.status }; }); })
+        .then(function (d) {
+          if (d.ok) { banner('تمت إعادة الإرسال: ' + d.ref + ' ' + (d.sandoogId || '') + (d.warning ? ' — ' + d.warning : ''), d.warning ? 'err' : 'okb'); onDone(true); }
+          else { banner('فشل: ' + d.error, 'err'); go.disabled = false; go.textContent = 'إعادة الإرسال إلى صندوق'; }
+        })
+        .catch(function (e) { banner('خطأ في الاتصال: ' + e.message, 'err'); go.disabled = false; go.textContent = 'إعادة الإرسال إلى صندوق'; });
+    });
+    return el('div', { class: 'xpanel' }, [
+      el('div', { style: 'font-weight:600', text: 'إعادة إرسال الطلب ' + o.name + ' (طلب جديد في صندوق بنفس القطع ونفس المبلغ — أجور التوصيل على الشركة)' }),
+      el('div', { class: 'items' }, o.items.map(function (i) { return el('div', { text: i.qty + ' × ' + i.title + (i.variant ? ' — ' + i.variant : '') }); })),
+      el('label', { text: 'المحافظة' }), city, el('label', { text: 'المنطقة' }), region,
+      el('label', { text: 'الهاتف' }), phone, el('label', { text: 'العنوان' }), addr,
+      el('div', { class: 'row', style: 'margin-top:8px' }, [go, cancel]),
+    ]);
+  }
   function exchangePanel(o, citySel0, region0, phone0, addr0, onDone) {
     var kind = el('select', {}, [el('option', { value: 'exchange', text: 'تبديل' }), el('option', { value: 'return', text: 'استرجاع' })]);
     var back = o.items.map(function (i) {
@@ -219,11 +250,16 @@
         if (holder.firstChild) { holder.textContent = ''; return; }
         holder.appendChild(exchangePanel(o, citySel, region, phone, addr, function (done) { holder.textContent = ''; if (done) load(true); }));
       });
-      btnBox.push(el('br'), xb);
+      var rb = el('button', { text: 'إعادة إرسال', style: 'margin-top:6px', title: 'الطلب رجع والزبون لسا بدو إياه: طلب جديد في صندوق بنفس القطع والمبلغ' });
+      rb.addEventListener('click', function () {
+        if (holder.firstChild) { holder.textContent = ''; return; }
+        holder.appendChild(resendPanel(o, citySel, region, phone, addr, function (done) { holder.textContent = ''; if (done) load(true); }));
+      });
+      btnBox.push(el('br'), xb, el('br'), rb);
     }
     var wrap = el('div', { class: 'order' + (o.status === 'pending' && !o.cityCode ? ' warn' : '') }, [left, cust, loc, items, el('div', {}, btnBox)]);
     if (o.exchange && o.exchange.kinds && o.exchange.kinds.length) {
-      wrap.appendChild(el('div', { class: 'mute', style: 'grid-column:1/-1', text: 'لهذا الطلب ' + o.exchange.kinds.map(function (k) { return k === 'exchange' ? 'تبديل' : 'استرجاع'; }).join(' + ') + (o.exchange.status ? ' · حالته في صندوق: ' + (STATUS_AR[o.exchange.status] || o.exchange.status) : '') }));
+      wrap.appendChild(el('div', { class: 'mute', style: 'grid-column:1/-1', text: 'لهذا الطلب ' + o.exchange.kinds.map(function (k) { return k === 'exchange' ? 'تبديل' : (k === 'resend' ? 'إعادة إرسال' : 'استرجاع'); }).join(' + ') + (o.exchange.status ? ' · حالته في صندوق: ' + (STATUS_AR[o.exchange.status] || o.exchange.status) : '') }));
     }
     wrap.appendChild(holder);
     return wrap;
