@@ -79,6 +79,7 @@ function exchangeOf(o) {
   const kinds = [];
   if (tags.includes('sandoog-exchange')) kinds.push('exchange');
   if (tags.includes('sandoog-return')) kinds.push('return');
+  if (tags.includes('sandoog-resent')) kinds.push('resend');
   const st = tags.find((t) => /^sandoog-ex:/i.test(t));
   return { kinds, status: st ? st.slice(11) : '' };
 }
@@ -381,6 +382,80 @@ function mount(app) {
       return res.json({ ok: true, ref, sandoogId: sidText });
     } catch (err) {
       logger.error('Admin: failed to create ' + kind + ' order for ' + name, err.response ? err.response.data : err.message);
+      return res.status(500).json({ ok: false, error: errText(err) });
+    } finally {
+      sending.delete(lockKey);
+    }
+  });
+
+  // Resend: the parcel came back but the customer still wants it -> NEW linked Sandoog order (<order>-RS[n]) with the
+  // same items / same amount to collect; the Shopify order is NOT returned or restocked (tag sandoog-resent).
+  app.post('/admin/api/resend', auth, json, async (req, res) => {
+    const b = req.body || {};
+    const name = String(b.name || '').trim();
+    const code = String(b.city || '').trim();
+    const phone = String(b.phone || '').trim();
+    const address = String(b.address || '').trim();
+    if (!name) return res.status(400).json({ ok: false, error: 'Missing order name' });
+    if (!CITY_CODES.has(code)) return res.status(400).json({ ok: false, error: 'اختر المحافظة من القائمة' });
+    if (!phone) return res.status(400).json({ ok: false, error: 'رقم الهاتف فارغ' });
+    const lockKey = name + '#rs';
+    if (sending.has(lockKey)) return res.status(409).json({ ok: false, error: 'إعادة الإرسال قيد التنفيذ الآن' });
+    sending.add(lockKey);
+    try {
+      const found = await shopify.graphql(
+        'query ($q: String!) { orders(first: 1, query: $q) { nodes { id name tags note cancelledAt } } }',
+        { q: 'name:' + name }
+      );
+      const node = found.orders.nodes[0];
+      if (!node || node.name !== name) return res.status(404).json({ ok: false, error: 'الطلب غير موجود في Shopify' });
+      if (node.cancelledAt) return res.status(409).json({ ok: false, error: 'الطلب ملغي في Shopify' });
+      if (statusOf(node).status !== 'sent') return res.status(409).json({ ok: false, error: 'هذا الطلب لم يُرسل إلى صندوق أصلاً' });
+
+      const rest = await shopify.getOrderRestByName(name);
+      if (!rest) return res.status(404).json({ ok: false, error: 'تعذر تحميل تفاصيل الطلب من Shopify' });
+      rest.line_items = currentLines(rest);
+      const base = rest.shipping_address || rest.billing_address || {};
+      rest.shipping_address = Object.assign({}, base, { phone, address1: address || base.address1 || '', address2: address ? '' : base.address2 || '' });
+
+      const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const used = (node.note || '').match(new RegExp(esc + '-RS\\d*', 'g')) || [];
+      const ref = name + '-RS' + (used.length ? String(new Set(used).size + 1) : '');
+
+      const orderPost = mapShopifyOrderToSandoog(rest);
+      orderPost.external_reference = ref;
+      orderPost.notes = 'إعادة إرسال للطلب ' + name + ' (رجع ولسا الزبون بدو الطلب) - نفس القطع ونفس المبلغ، أجور التوصيل على الشركة. ' + (orderPost.notes || '');
+      orderPost.customer.state = code;
+      orderPost.delivery.delivery_region = b.region === 'Center' || b.region === 'County'
+        ? b.region
+        : (centers().includes(code) ? 'Center' : 'County');
+      await resolveSandoogProductIds(orderPost, rest);
+
+      logger.info('Admin: sending Sandoog resend order ' + ref + ': ' + JSON.stringify(orderPost));
+      const result = await sandoog.createOrder(orderPost);
+      logger.info('Sandoog accepted resend order ' + ref + ' (manual)', result);
+      const sid = typeof result === 'string' ? result : ((result && (result.id || (result.data && (result.data.id || result.data)))) || '');
+      const sidText = typeof sid === 'string' ? sid : JSON.stringify(sid);
+
+      const warnings = [];
+      if ((node.tags || []).includes('sandoog-returned')) warnings.push('تنبيه: كان قد أُنشئ Return وأُرجع المخزون لهذا الطلب سابقاً، راجع المخزون يدوياً');
+      try {
+        await shopify.graphql(
+          'mutation ($id: ID!, $tags: [String!]!) { tagsAdd(id: $id, tags: $tags) { userErrors { field message } } }',
+          { id: node.id, tags: ['sandoog-resent'] }
+        );
+        const line = `[Sandoog] ${new Date().toISOString()} resend order ${ref} created ${sidText}`.trim();
+        await shopify.graphql(
+          'mutation ($input: OrderInput!) { orderUpdate(input: $input) { userErrors { field message } } }',
+          { input: { id: node.id, note: node.note ? node.note + '\n' + line : line } }
+        );
+      } catch (tagErr) {
+        logger.error('Resend order ' + ref + ' was created in Sandoog but tagging the Shopify order failed', tagErr.message);
+        warnings.push('أُنشئ الطلب في صندوق لكن تعذر وسم الطلب الأصلي في Shopify - لا تعد الإنشاء');
+      }
+      return res.json({ ok: true, ref, sandoogId: sidText, warning: warnings.join(' — ') || undefined });
+    } catch (err) {
+      logger.error('Admin: failed to resend order ' + name, err.response ? err.response.data : err.message);
       return res.status(500).json({ ok: false, error: errText(err) });
     } finally {
       sending.delete(lockKey);
