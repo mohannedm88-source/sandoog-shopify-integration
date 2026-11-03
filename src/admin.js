@@ -99,7 +99,7 @@ const ORDERS_QUERY = `query ($first: Int!, $q: String) {
     nodes {
       id name createdAt cancelledAt tags note
       email phone paymentGatewayNames displayFulfillmentStatus
-      totalPriceSet { shopMoney { amount currencyCode } }
+      totalPriceSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
       shippingAddress { name phone city province address1 address2 }
       lineItems(first: 30) { nodes { title variantTitle sku quantity currentQuantity } }
     }
@@ -133,8 +133,8 @@ function shape(o) {
       .map((l) => ({
       title: l.title, variant: l.variantTitle || '', sku: l.sku || '', qty: typeof l.currentQuantity === 'number' ? l.currentQuantity : l.quantity,
     })),
-    total: o.totalPriceSet ? o.totalPriceSet.shopMoney.amount : '',
-    currency: o.totalPriceSet ? o.totalPriceSet.shopMoney.currencyCode : '',
+    total: o.totalPriceSet ? (o.totalPriceSet.presentmentMoney || o.totalPriceSet.shopMoney).amount : '',
+    currency: o.totalPriceSet ? (o.totalPriceSet.presentmentMoney || o.totalPriceSet.shopMoney).currencyCode : '',
     cod,
     note: o.note || '',
   };
@@ -456,7 +456,7 @@ function mount(app) {
       if (amount !== null && amount !== origTotal) editSummary += (editSummary ? ' | ' : '') + 'المبلغ المطلوب: ' + amount + ' د.ع (كان ' + origTotal + ')';
       orderPost.notes = 'إعادة إرسال للطلب ' + name + ' (رجع ولسا الزبون بدو الطلب) - أجور التوصيل على الشركة. '
         + (editSummary ? 'تعديل عند إعادة الإرسال: ' + editSummary + '. ' : 'نفس القطع ونفس المبلغ. ')
-        + (orderPost.notes || '');
+        + String(orderPost.notes || '').split('\n').filter((l) => !/^\[Sandoog\]/.test(l)).join(' ').trim();
       orderPost.customer.state = code;
       orderPost.delivery.delivery_region = b.region === 'Center' || b.region === 'County'
         ? b.region
@@ -471,7 +471,31 @@ function mount(app) {
       }
 
       logger.info('Admin: sending Sandoog resend order ' + ref + ': ' + JSON.stringify(orderPost));
-      const result = await sandoog.createOrder(orderPost);
+      // Sandoog rejects what it considers a duplicate of an earlier order (same customer/items) with "Duplicated request."
+      // -> retry with small, cumulative differences until one is accepted.
+      const variants = [
+        () => {},
+        () => { orderPost.customer.name = orderPost.customer.name + ' (إعادة إرسال)'; },
+        () => { orderPost.customer.address = (orderPost.customer.address || '') + ' - إعادة إرسال'; },
+        () => { if (orderPost.delivery.delivery_items[0]) orderPost.delivery.delivery_items[0].description += ' (RS)'; },
+      ];
+      let result;
+      let lastErr = null;
+      for (let vi = 0; vi < variants.length; vi++) {
+        variants[vi]();
+        try {
+          result = await sandoog.createOrder(orderPost);
+          lastErr = null;
+          if (vi) logger.info('Resend order ' + ref + ' accepted by Sandoog with variant #' + vi);
+          break;
+        } catch (e) {
+          lastErr = e;
+          const txt = JSON.stringify((e.response && e.response.data) || e.message || '');
+          if (!/duplicat/i.test(txt)) throw e;
+          logger.warn('Sandoog said duplicate for resend ' + ref + ' (variant #' + vi + ')');
+        }
+      }
+      if (lastErr) throw lastErr;
       logger.info('Sandoog accepted resend order ' + ref + ' (manual)', result);
       const sid = typeof result === 'string' ? result : ((result && (result.id || (result.data && (result.data.id || result.data)))) || '');
       const sidText = typeof sid === 'string' ? sid : JSON.stringify(sid);
