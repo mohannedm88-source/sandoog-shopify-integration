@@ -54,6 +54,10 @@ async function returnOrder(orderGid) {
   const o = data.order;
   if (!o) return { ok: false, error: 'order not found' };
   if (o.tags.includes('sandoog-returned')) return { ok: true, already: true };
+  if (o.tags.includes('sandoog-resent')) {
+    await addNote(o.id, o.note, 'Returned من صندوق لكن الطلب أُعيد إرساله - لم يُنشأ Return ولم يُغيَّر المخزون');
+    return { ok: true, skipped: 'resent' };
+  }
   if ((o.returns.nodes || []).length) {
     await shopify.graphql(TAG, { id: o.id, tags: ['sandoog-returned'] });
     return { ok: true, already: true };
