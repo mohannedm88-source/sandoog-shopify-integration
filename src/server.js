@@ -117,7 +117,7 @@ app.post(
 
       try {
               // Exchange/return orders are sent with external_reference "<order>-EX[n]" / "<order>-RT[n]".
-              const exm = /^(.+?)-(EX|RT)\d*$/i.exec(String(externalReference));
+              const exm = /^(.+?)-(EX|RT|RS)\d*$/i.exec(String(externalReference));
               const order = await shopify.findOrderByName(exm ? exm[1] : externalReference);
               if (!order) {
                         logger.warn('No Shopify order found matching external_reference "' + externalReference + '"');
@@ -130,6 +130,15 @@ app.post(
 
             if (exm) {
                       await shopify.syncSandoogStatus(order, eventType, driverNote, { prefix: 'sandoog-ex:', label: 'Sandoog ' + externalReference });
+                      // A resent order (-RS) carries the original order's money: when it is collected, mark the original paid.
+                      if (/^RS$/i.test(exm[2]) && (eventType === 'Complete' || require('./shopifyPayments').isBalanceUpdated(eventType))) {
+                                try {
+                                          const pr = await require('./shopifyPayments').markOrderPaid(order.id);
+                                          logger.info('Shopify mark-as-paid (resend) for ' + order.name + ': ' + JSON.stringify(pr));
+                                } catch (payErr) {
+                                          logger.error('Failed to mark ' + order.name + ' as paid in Shopify', payErr.message);
+                                }
+                      }
                       return;
             }
 
