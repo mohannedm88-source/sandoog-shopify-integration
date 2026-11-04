@@ -170,6 +170,7 @@
     var addBtn = el('button', { text: '+ قطعة جديدة', onclick: function () { addNew(); } });
     var newWrap = el('div', {}, [el('label', { text: 'القطع الجديدة اللي رح تنرسل للزبون (SKU كما في صندوق)' }), newBox, addBtn]);
     var amount = el('input', { type: 'number', min: '0', value: '0', style: 'width:140px' });
+    var refund = el('input', { type: 'number', min: '0', value: '0', style: 'width:140px' });
     var city = el('select', {}, [el('option', { value: '', text: '— اختر المحافظة —' })]);
     state.cities.forEach(function (c) { var op = el('option', { value: c.code, text: c.label }); if (c.code === citySel0.value) op.selected = true; city.appendChild(op); });
     var region = el('select', {}, [el('option', { value: 'Center', text: 'Center (مركز)' }), el('option', { value: 'County', text: 'County (أطراف)' })]);
@@ -187,10 +188,10 @@
       if (!takeBack.length) { banner('اختر القطع اللي رح تنستلم من الزبون', 'err'); return; }
       if (kind.value === 'exchange' && !newItems.length) { banner('أضف SKU القطعة الجديدة للتبديل', 'err'); return; }
       if (!city.value) { banner('اختر المحافظة', 'err'); return; }
-      if (!window.confirm('إنشاء طلب ' + (kind.value === 'exchange' ? 'تبديل' : 'استرجاع') + ' جديد في صندوق للطلب ' + o.name + '؟\nسيُحتسب له أجور توصيل جديدة.\nالمبلغ المطلوب من الزبون: ' + (Number(amount.value) || 0))) return;
+      if (!window.confirm('إنشاء طلب ' + (kind.value === 'exchange' ? 'تبديل' : 'استرجاع') + ' جديد في صندوق للطلب ' + o.name + '؟\nسيُحتسب له أجور توصيل جديدة.\nالمبلغ المطلوب من الزبون: ' + (Number(amount.value) || 0) + '\nالمبلغ المدفوع للزبون (مرتجع): ' + (Number(refund.value) || 0))) return;
       go.disabled = true; go.textContent = 'جارٍ الإرسال...';
       fetch('/admin/api/exchange', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
-        body: JSON.stringify({ name: o.name, kind: kind.value, takeBack: takeBack, newItems: newItems, amount: Number(amount.value) || 0, city: city.value, region: region.value, phone: phone.value, address: addr.value }) })
+        body: JSON.stringify({ name: o.name, kind: kind.value, takeBack: takeBack, newItems: newItems, amount: Number(amount.value) || 0, refund: Number(refund.value) || 0, city: city.value, region: region.value, phone: phone.value, address: addr.value }) })
         .then(function (r) { return r.json().catch(function () { return { ok: false, error: 'HTTP ' + r.status }; }); })
         .then(function (d) {
           if (d.ok) { banner('تم إنشاء ' + d.ref + ' في صندوق ' + (d.sandoogId || '') + (d.warning ? ' — ' + d.warning : ''), d.warning ? 'err' : 'okb'); onDone(true); }
@@ -205,6 +206,7 @@
       el('div', {}, back.map(function (b) { return b.row; })),
       newWrap,
       el('label', { text: 'المبلغ المطلوب من الزبون عند الاستلام (دينار، يشمل أجور التوصيل — 0 إذا ما في)' }), amount,
+      el('label', { text: 'مبلغ المرتجع اللي يندفع للزبون عند الاستلام (دينار — 0 إذا ما في)' }), refund,
       el('label', { text: 'المحافظة' }), city, el('label', { text: 'المنطقة' }), region,
       el('label', { text: 'الهاتف' }), phone, el('label', { text: 'العنوان' }), addr,
       el('div', { class: 'row', style: 'margin-top:8px' }, [go, cancel]),
