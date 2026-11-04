@@ -290,6 +290,7 @@ function mount(app) {
     const phone = String(b.phone || '').trim();
     const address = String(b.address || '').trim();
     const amount = Math.max(0, Math.round(Number(b.amount) || 0));
+    const refund = Math.max(0, Math.round(Number(b.refund) || 0));
     const clean = (arr) => (Array.isArray(arr) ? arr : [])
       .map((x) => ({
         sku: String((x && x.sku) || '').trim(),
@@ -337,7 +338,8 @@ function mount(app) {
       const notes = (kind === 'exchange' ? 'تبديل' : 'استرجاع') + ' للطلب ' + name + ' - استلام من الزبون وإعادته للمخزن: '
         + takeBack.map(label).join('، ')
         + (kind === 'exchange' ? ' - وتسليم القطع الجديدة: ' + newItems.map(label).join('، ') : ' - لا يوجد تسليم منتجات')
-        + (amount ? ' - المبلغ المطلوب من الزبون: ' + amount + ' د.ع' : ' - لا يوجد مبلغ مطلوب من الزبون');
+        + (amount ? ' - المبلغ المطلوب من الزبون: ' + amount + ' د.ع' : ' - لا يوجد مبلغ مطلوب من الزبون')
+        + (refund ? ' - مبلغ يُدفع للزبون عند الاستلام: ' + refund + ' د.ع' : '');
 
       const orderPost = mapShopifyOrderToSandoog(rest);
       orderPost.external_reference = ref;
@@ -370,7 +372,7 @@ function mount(app) {
           'mutation ($id: ID!, $tags: [String!]!) { tagsAdd(id: $id, tags: $tags) { userErrors { field message } } }',
           { id: node.id, tags: [kind === 'exchange' ? 'sandoog-exchange' : 'sandoog-return'] }
         );
-        const line = `[Sandoog] ${new Date().toISOString()} ${kind} order ${ref} created ${sidText}`.trim();
+        const line = `[Sandoog] ${new Date().toISOString()} ${kind} order ${ref} created ${sidText}${refund ? ' | refund to customer: ' + refund : ''}`.trim();
         await shopify.graphql(
           'mutation ($input: OrderInput!) { orderUpdate(input: $input) { userErrors { field message } } }',
           { input: { id: node.id, note: node.note ? node.note + '\n' + line : line } }
