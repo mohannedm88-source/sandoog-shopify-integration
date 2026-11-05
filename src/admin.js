@@ -230,6 +230,23 @@ function mount(app) {
       if (!rest) return res.status(404).json({ ok: false, error: 'تعذر تحميل تفاصيل الطلب من Shopify' });
 
       rest.line_items = currentLines(rest);
+      let skuNote = '';
+      if (Array.isArray(b.skus) && b.skus.length) {
+        const cur = rest.line_items;
+        const orig = Array.isArray(b.origSkus) ? b.origSkus : [];
+        if (b.skus.length !== cur.length) return res.status(409).json({ ok: false, error: 'تغيّرت قطع الطلب في Shopify، حدّث الصفحة ثم أعد المحاولة' });
+        const changed = [];
+        rest.line_items = cur.map((li, i) => {
+          const ns = String(b.skus[i] == null ? '' : b.skus[i]).trim();
+          if (!ns || normSku(ns) === normSku(li.sku)) return li;
+          if (orig.length === cur.length && normSku(orig[i]) !== normSku(li.sku)) {
+            throw new Error('تغيّرت قطع الطلب في Shopify، حدّث الصفحة ثم أعد المحاولة');
+          }
+          changed.push((li.sku || 'بدون SKU') + ' -> ' + ns);
+          return Object.assign({}, li, { sku: ns });
+        });
+        if (changed.length) skuNote = 'SKU عُدّل عند الإرسال: ' + changed.join('، ');
+      }
       const base = rest.shipping_address || rest.billing_address || {};
       rest.shipping_address = Object.assign({}, base, {
         phone,
@@ -254,6 +271,7 @@ function mount(app) {
         amountNote = 'المبلغ المطلوب من الزبون عُدّل عند الإرسال: ' + amount + ' د.ع (كان ' + origTotal + ')';
         orderPost.notes = (amountNote + (orderPost.notes ? ' | ' + orderPost.notes : '')).trim();
       }
+      if (skuNote) orderPost.notes = (skuNote + (orderPost.notes ? ' | ' + orderPost.notes : '')).trim();
 
       logger.info('Admin: sending Sandoog order for Shopify order ' + name + ': ' + JSON.stringify(orderPost));
       const result = await sandoog.createOrder(orderPost);
@@ -266,7 +284,7 @@ function mount(app) {
           'mutation ($id: ID!, $tags: [String!]!) { tagsAdd(id: $id, tags: $tags) { userErrors { field message } } }',
           { id: node.id, tags: [SENT_TAG] }
         );
-        const line = `[Sandoog] ${new Date().toISOString()} sent manually ${sandoogIdText}${amountNote ? ' | ' + amountNote : ''}`.trim();
+        const line = `[Sandoog] ${new Date().toISOString()} sent manually ${sandoogIdText}${amountNote ? ' | ' + amountNote : ''}${skuNote ? ' | ' + skuNote : ''}`.trim();
         await shopify.graphql(
           'mutation ($input: OrderInput!) { orderUpdate(input: $input) { userErrors { field message } } }',
           { input: { id: node.id, note: node.note ? node.note + '\n' + line : line } }
