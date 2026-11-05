@@ -228,15 +228,19 @@
     var phone = el('input', { type: 'text', value: o.phone, dir: 'ltr' });
     var addr = el('textarea', {}); addr.value = o.address;
     var sent = o.status !== 'pending';
-    [citySel, region, phone, addr].forEach(function (x) { x.disabled = sent; });
+    var amt = el('input', { type: 'number', min: '0', value: String(Math.round(o.total) || 0), style: 'width:130px' });
+    [citySel, region, phone, addr, amt].forEach(function (x) { x.disabled = sent; });
     var btn = el('button', { class: 'send', text: sent ? 'تم الإرسال' : 'إرسال إلى صندوق' });
     btn.disabled = sent;
     btn.addEventListener('click', function () {
       if (!citySel.value) { banner('اختر المحافظة للطلب ' + o.name, 'err'); citySel.focus(); return; }
-      if (!window.confirm('إرسال الطلب ' + o.name + ' إلى صندوق؟\nالمحافظة: ' + citySel.options[citySel.selectedIndex].text + '\nالهاتف: ' + phone.value)) return;
+      var amtVal = Math.round(Number(amt.value));
+      if (!isFinite(amtVal) || amtVal < 0) { banner('المبلغ غير صحيح للطلب ' + o.name, 'err'); amt.focus(); return; }
+      var amtChanged = amtVal !== Math.round(o.total);
+      if (!window.confirm('إرسال الطلب ' + o.name + ' إلى صندوق؟\nالمحافظة: ' + citySel.options[citySel.selectedIndex].text + '\nالهاتف: ' + phone.value + '\nالمبلغ المطلوب من الزبون: ' + amtVal + ' د.ع' + (amtChanged ? ' (معدّل، الأصلي ' + Math.round(o.total) + ')' : ''))) return;
       btn.disabled = true; btn.textContent = 'جارٍ الإرسال...';
       fetch('/admin/api/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
-        body: JSON.stringify({ name: o.name, city: citySel.value, region: region.value, phone: phone.value, address: addr.value }) })
+        body: JSON.stringify({ name: o.name, city: citySel.value, region: region.value, phone: phone.value, address: addr.value, amount: amtChanged ? amtVal : undefined }) })
         .then(function (r) { return r.json().catch(function () { return { ok: false, error: 'HTTP ' + r.status }; }); })
         .then(function (d) {
           if (d.ok) { banner('تم إرسال ' + o.name + ' إلى صندوق ' + (d.sandoogId || '') + (d.warning ? ' — ' + d.warning : (d.fulfilled ? ' — وصار Fulfilled في Shopify' : '')), d.warning ? 'err' : 'okb'); load(true); }
@@ -254,6 +258,8 @@
       el('div', { text: o.customer, style: 'font-weight:600' }),
       el('label', { text: 'الهاتف' }), phone,
       el('div', { class: 'mute', style: 'margin-top:6px', text: (o.cod ? 'الدفع عند الاستلام: ' : 'مدفوع: ') + o.total + ' ' + o.currency }),
+      sent ? null : el('label', { text: 'المبلغ المطلوب من الزبون (دينار) — يمكن تعديله قبل الإرسال' }),
+      sent ? null : amt,
     ]);
     var loc = el('div', {}, [
       el('label', { text: 'المحافظة (صندوق)' }), citySel,
