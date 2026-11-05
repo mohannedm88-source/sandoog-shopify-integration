@@ -209,6 +209,8 @@ function mount(app) {
     const code = String(b.city || '').trim();
     const phone = String(b.phone || '').trim();
     const address = String(b.address || '').trim();
+    const amount = b.amount === undefined || b.amount === null || b.amount === '' ? null : Math.max(0, Math.round(Number(b.amount)));
+    if (amount !== null && !Number.isFinite(amount)) return res.status(400).json({ ok: false, error: 'المبلغ غير صحيح' });
     if (!name) return res.status(400).json({ ok: false, error: 'Missing order name' });
     if (!CITY_CODES.has(code)) return res.status(400).json({ ok: false, error: 'اختر المحافظة من القائمة' });
     if (!phone) return res.status(400).json({ ok: false, error: 'رقم الهاتف فارغ' });
@@ -241,6 +243,17 @@ function mount(app) {
         ? b.region
         : (centers().includes(code) ? 'Center' : 'County');
       await resolveSandoogProductIds(orderPost, rest);
+      let amountNote = '';
+      const origTotal = Math.round(Number(rest.current_total_price || rest.total_price || 0));
+      if (amount !== null && amount !== origTotal) {
+        orderPost.payment.total_price = amount;
+        if (orderPost.payment.lines && orderPost.payment.lines[0]) {
+          orderPost.payment.lines[0].value = amount;
+          if (orderPost.payment.lines[0].type === 'Cash') orderPost.payment.lines[0].is_paid = amount === 0;
+        }
+        amountNote = 'المبلغ المطلوب من الزبون عُدّل عند الإرسال: ' + amount + ' د.ع (كان ' + origTotal + ')';
+        orderPost.notes = (amountNote + (orderPost.notes ? ' | ' + orderPost.notes : '')).trim();
+      }
 
       logger.info('Admin: sending Sandoog order for Shopify order ' + name + ': ' + JSON.stringify(orderPost));
       const result = await sandoog.createOrder(orderPost);
@@ -253,7 +266,7 @@ function mount(app) {
           'mutation ($id: ID!, $tags: [String!]!) { tagsAdd(id: $id, tags: $tags) { userErrors { field message } } }',
           { id: node.id, tags: [SENT_TAG] }
         );
-        const line = `[Sandoog] ${new Date().toISOString()} sent manually ${sandoogIdText}`.trim();
+        const line = `[Sandoog] ${new Date().toISOString()} sent manually ${sandoogIdText}${amountNote ? ' | ' + amountNote : ''}`.trim();
         await shopify.graphql(
           'mutation ($input: OrderInput!) { orderUpdate(input: $input) { userErrors { field message } } }',
           { input: { id: node.id, note: node.note ? node.note + '\n' + line : line } }
