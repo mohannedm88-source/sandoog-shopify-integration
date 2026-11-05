@@ -229,6 +229,7 @@
     var addr = el('textarea', {}); addr.value = o.address;
     var sent = o.status !== 'pending';
     var amt = el('input', { type: 'number', min: '0', value: String(Math.round(o.total) || 0), style: 'width:130px' });
+    var skuInputs = [];
     [citySel, region, phone, addr, amt].forEach(function (x) { x.disabled = sent; });
     var btn = el('button', { class: 'send', text: sent ? 'تم الإرسال' : 'إرسال إلى صندوق' });
     btn.disabled = sent;
@@ -237,10 +238,14 @@
       var amtVal = Math.round(Number(amt.value));
       if (!isFinite(amtVal) || amtVal < 0) { banner('المبلغ غير صحيح للطلب ' + o.name, 'err'); amt.focus(); return; }
       var amtChanged = amtVal !== Math.round(o.total);
-      if (!window.confirm('إرسال الطلب ' + o.name + ' إلى صندوق؟\nالمحافظة: ' + citySel.options[citySel.selectedIndex].text + '\nالهاتف: ' + phone.value + '\nالمبلغ المطلوب من الزبون: ' + amtVal + ' د.ع' + (amtChanged ? ' (معدّل، الأصلي ' + Math.round(o.total) + ')' : ''))) return;
+      var skuVals = skuInputs.map(function (x) { return x.value.trim(); });
+      if (skuVals.some(function (x) { return !x; })) { banner('أحد الـ SKU فارغ في الطلب ' + o.name, 'err'); return; }
+      var skuChanges = [];
+      skuVals.forEach(function (v, idx) { if (v !== (o.items[idx].sku || '')) skuChanges.push((o.items[idx].sku || 'بدون SKU') + ' ← ' + v); });
+      if (!window.confirm('إرسال الطلب ' + o.name + ' إلى صندوق؟\nالمحافظة: ' + citySel.options[citySel.selectedIndex].text + '\nالهاتف: ' + phone.value + '\nالمبلغ المطلوب من الزبون: ' + amtVal + ' د.ع' + (amtChanged ? ' (معدّل، الأصلي ' + Math.round(o.total) + ')' : '') + (skuChanges.length ? '\nتعديل SKU: ' + skuChanges.join('، ') : ''))) return;
       btn.disabled = true; btn.textContent = 'جارٍ الإرسال...';
       fetch('/admin/api/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
-        body: JSON.stringify({ name: o.name, city: citySel.value, region: region.value, phone: phone.value, address: addr.value, amount: amtChanged ? amtVal : undefined }) })
+        body: JSON.stringify({ name: o.name, city: citySel.value, region: region.value, phone: phone.value, address: addr.value, amount: amtChanged ? amtVal : undefined, skus: skuInputs.length ? skuVals : undefined, origSkus: skuInputs.length ? o.items.map(function (i) { return i.sku || ''; }) : undefined }) })
         .then(function (r) { return r.json().catch(function () { return { ok: false, error: 'HTTP ' + r.status }; }); })
         .then(function (d) {
           if (d.ok) { banner('تم إرسال ' + o.name + ' إلى صندوق ' + (d.sandoogId || '') + (d.warning ? ' — ' + d.warning : (d.fulfilled ? ' — وصار Fulfilled في Shopify' : '')), d.warning ? 'err' : 'okb'); load(true); }
@@ -269,7 +274,9 @@
       el('label', { text: 'العنوان' }), addr,
     ]);
     var items = el('div', { class: 'items' }, o.items.map(function (i) {
-      return el('div', {}, [el('div', { text: i.qty + ' × ' + i.title + (i.variant ? ' — ' + i.variant : '') }), el('span', { class: 'sku', text: i.sku || '(بدون SKU)' })]);
+      var si = null;
+      if (!sent) { si = el('input', { type: 'text', value: i.sku || '', placeholder: 'SKU (فارغ؟ اكتبه)', dir: 'ltr', title: 'يمكن تعديل الـ SKU قبل الإرسال (يتغير في طلب صندوق فقط)', style: 'width:100%;max-width:240px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px' }); skuInputs.push(si); }
+      return el('div', {}, [el('div', { text: i.qty + ' × ' + i.title + (i.variant ? ' — ' + i.variant : '') }), si || el('span', { class: 'sku', text: i.sku || '(بدون SKU)' })]);
     }));
     var btnBox = [btn];
     var holder = el('div', { style: 'grid-column:1/-1' });
