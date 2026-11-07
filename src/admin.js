@@ -585,6 +585,114 @@ function mount(app) {
     }
   });
 
+  // ---- SKU sync: make Shopify variant SKUs identical to the SKUs stored in the Sandoog warehouse ----
+  let sandoogSkuCache = null; // { at, skus }
+  async function listSandoogSkus() {
+    if (sandoogSkuCache && Date.now() - sandoogSkuCache.at < 10 * 60 * 1000) return sandoogSkuCache.skus;
+    const found = new Set();
+    const walk = (node) => {
+      if (Array.isArray(node)) return node.forEach(walk);
+      if (node && typeof node === 'object') {
+        const k = Object.keys(node).find((x) => /sku/i.test(x) && typeof node[x] === 'string' && node[x]);
+        if (k) { found.add(node[k]); return; }
+        Object.keys(node).forEach((x) => walk(node[x]));
+      }
+    };
+    for (let page = 0; page < 300; page++) {
+      const before = found.size;
+      walk(await sandoog.searchProducts({ page_number: page, page_size: 50 }));
+      if (found.size === before) break;
+    }
+    const skus = [...found];
+    sandoogSkuCache = { at: Date.now(), skus };
+    return skus;
+  }
+  async function listShopifyVariants() {
+    const out = [];
+    let after = null;
+    for (let i = 0; i < 60; i++) {
+      const d = await shopify.graphql(
+        'query ($after: String) { productVariants(first: 250, after: $after) { pageInfo { hasNextPage endCursor } nodes { id sku title product { id title status } } } }',
+        { after }
+      );
+      out.push(...d.productVariants.nodes);
+      if (!d.productVariants.pageInfo.hasNextPage) break;
+      after = d.productVariants.pageInfo.endCursor;
+    }
+    return out;
+  }
+  function skuPlan(variants, sandoogSkus) {
+    const exact = new Set(sandoogSkus);
+    const byNorm = new Map();
+    sandoogSkus.forEach((s) => { const k = normSku(s); if (!byNorm.has(k)) byNorm.set(k, new Set()); byNorm.get(k).add(s); });
+    const plan = { same: 0, fix: [], ambiguous: [], missing: [], empty: [] };
+    variants.forEach((v) => {
+      const row = { id: v.id, productId: v.product && v.product.id, product: v.product ? v.product.title : '', status: v.product ? v.product.status : '', variant: v.title, from: v.sku || '' };
+      if (!row.from) { plan.empty.push(row); return; }
+      if (exact.has(row.from)) { plan.same++; return; }
+      const c = byNorm.get(normSku(row.from));
+      if (c && c.size === 1) plan.fix.push(Object.assign(row, { to: [...c][0] }));
+      else if (c) plan.ambiguous.push(Object.assign(row, { candidates: [...c] }));
+      else plan.missing.push(row);
+    });
+    return plan;
+  }
+
+  // Dry run: nothing is changed.
+  app.get('/admin/api/sku-audit', auth, async (_req, res) => {
+    try {
+      sandoogSkuCache = null;
+      const [sk, variants] = await Promise.all([listSandoogSkus(), listShopifyVariants()]);
+      const plan = skuPlan(variants, sk);
+      res.set('Cache-Control', 'no-store');
+      res.json({
+        ok: true, sandoogCount: sk.length, shopifyCount: variants.length,
+        same: plan.same, fixCount: plan.fix.length, ambiguousCount: plan.ambiguous.length, missingCount: plan.missing.length, emptyCount: plan.empty.length,
+        fix: plan.fix, ambiguous: plan.ambiguous.slice(0, 200), missing: plan.missing.slice(0, 300), empty: plan.empty.slice(0, 100),
+      });
+    } catch (err) {
+      logger.error('Admin: SKU audit failed', err.response ? err.response.data : err.message);
+      res.status(500).json({ ok: false, error: errText(err) });
+    }
+  });
+
+  // Apply a batch of fixes [{ id, productId, from, to }]. Only renames that differ by spaces/case and whose target exists in Sandoog are accepted.
+  app.post('/admin/api/sku-apply', auth, json, async (req, res) => {
+    try {
+      const items = Array.isArray(req.body && req.body.items) ? req.body.items.slice(0, 200) : [];
+      const sk = new Set(await listSandoogSkus());
+      const byProduct = new Map();
+      const failed = [];
+      let skipped = 0;
+      items.forEach((it) => {
+        const ok = it && typeof it.id === 'string' && typeof it.productId === 'string' && typeof it.from === 'string' && typeof it.to === 'string'
+          && sk.has(it.to) && normSku(it.from) === normSku(it.to);
+        if (!ok) { skipped++; return; }
+        if (!byProduct.has(it.productId)) byProduct.set(it.productId, []);
+        byProduct.get(it.productId).push(it);
+      });
+      let done = 0;
+      for (const [productId, list] of byProduct) {
+        try {
+          const d = await shopify.graphql(
+            'mutation ($productId: ID!, $variants: [ProductVariantsBulkInput!]!) { productVariantsBulkUpdate(productId: $productId, variants: $variants) { productVariants { id sku } userErrors { field message } } }',
+            { productId, variants: list.map((x) => ({ id: x.id, inventoryItem: { sku: x.to } })) }
+          );
+          const errs = d.productVariantsBulkUpdate.userErrors || [];
+          if (errs.length) failed.push(productId + ': ' + errs.map((e) => e.message).join('; '));
+          else done += list.length;
+        } catch (e) {
+          failed.push(productId + ': ' + String(e.message || e).slice(0, 200));
+        }
+      }
+      logger.info('Admin: SKU apply batch done=' + done + ' failed=' + failed.length + ' skipped=' + skipped);
+      res.json({ ok: true, done, skipped, failed });
+    } catch (err) {
+      logger.error('Admin: SKU apply failed', err.response ? err.response.data : err.message);
+      res.status(500).json({ ok: false, error: errText(err) });
+    }
+  });
+
   // Mark as paid every open order whose Sandoog status is Complete (cash collected) but is still unpaid in Shopify.
   app.post('/admin/api/mark-paid-complete', auth, json, async (_req, res) => {
     try {
