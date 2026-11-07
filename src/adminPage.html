@@ -48,10 +48,12 @@
   <button id="refresh">تحديث</button>
   <button id="fulfillAll" title="يحوّل الطلبات المرسلة لصندوق والتي ما زالت Unfulfilled إلى Fulfilled">تحويل المرسَل إلى Fulfilled</button>
   <button id="paidAll" title="يضع Paid للطلبات التي حالتها Complete في صندوق وما زالت Pending في Shopify">تحويل المكتمل إلى Paid</button>
+  <button id="skuAudit" title="يقارن SKU متجر Shopify مع SKU صندوق ويعرض الفروقات (بدون أي تعديل)">فحص SKU مع صندوق</button>
   <button id="regHook" title="يسجّل رابط استقبال حالات الطلبات من صندوق (مرة واحدة)">تفعيل مزامنة الحالات</button>
 </header>
 <main>
   <div id="msg"></div>
+  <div id="skuBox"></div>
   <div class="grid" id="list"></div>
 </main>
 <script>
@@ -95,8 +97,8 @@
     else if (o.fulfillment) t += ' · غير مُنفَّذ (Unfulfilled)';
     return t;
   }
-  function post(url) {
-    return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: '{}' })
+  function post(url, body) {
+    return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify(body || {}) })
       .then(function (r) { return r.json().catch(function () { return { ok: false, error: 'HTTP ' + r.status }; }); });
   }
   function resendPanel(o, citySel0, region0, phone0, addr0, onDone) {
@@ -328,6 +330,54 @@
       if (d.failed.length) msg += ' — تعذر: ' + d.failed.join(' | ');
       banner(msg, d.failed.length ? 'err' : 'okb'); load(true);
     }).catch(function (e) { banner('خطأ في الاتصال: ' + e.message, 'err'); });
+  });
+  var skuPlanData = null;
+  function renderSkuReport(d) {
+    var box = document.getElementById('skuBox'); box.textContent = '';
+    skuPlanData = d.fix;
+    var wrap = el('div', { class: 'banner', style: 'margin-bottom:12px' });
+    wrap.appendChild(el('div', { style: 'font-weight:600', text: 'نتيجة فحص SKU — متجر: ' + d.shopifyCount + ' نسخة، صندوق: ' + d.sandoogCount + ' SKU' }));
+    wrap.appendChild(el('div', { text: 'مطابق أصلاً: ' + d.same + ' | يحتاج تعديل (فرق مسافات/أحرف فقط): ' + d.fixCount + ' | بدون مقابل في صندوق: ' + d.missingCount + ' | أكثر من مقابل: ' + d.ambiguousCount + ' | بدون SKU: ' + d.emptyCount }));
+    function list(title, rows, fmt) {
+      if (!rows.length) return;
+      var det = el('details', {}, [el('summary', { text: title + ' (' + rows.length + (rows.length >= 100 ? '+' : '') + ')' })]);
+      var box2 = el('div', { class: 'sku', style: 'max-height:260px;overflow:auto;white-space:pre;display:block' });
+      box2.textContent = rows.slice(0, 400).map(fmt).join('\n');
+      det.appendChild(box2); wrap.appendChild(det);
+    }
+    list('سيتم تعديلها', d.fix, function (r) { return r.from + '  →  ' + r.to; });
+    list('بدون مقابل في صندوق (لن تُعدَّل)', d.missing, function (r) { return r.from + '   [' + r.product + ' / ' + r.variant + (r.status !== 'ACTIVE' ? ' / ' + r.status : '') + ']'; });
+    list('أكثر من مقابل في صندوق (لن تُعدَّل)', d.ambiguous, function (r) { return r.from + '  ?  ' + r.candidates.join(' | '); });
+    list('نسخ بدون SKU', d.empty, function (r) { return r.product + ' / ' + r.variant; });
+    if (d.fixCount) {
+      var go = el('button', { class: 'send', text: 'تطبيق التعديلات (' + d.fixCount + ')', style: 'margin-top:8px' });
+      go.addEventListener('click', function () {
+        if (!window.confirm('تعديل ' + d.fixCount + ' SKU في Shopify لتصير مطابقة حرفياً لصندوق؟ (يتغير نص الـ SKU فقط)')) return;
+        go.disabled = true;
+        var queue = skuPlanData.slice(), done = 0, failed = [];
+        (function next() {
+          if (!queue.length) {
+            banner('انتهى: تم تعديل ' + done + ' SKU' + (failed.length ? ' — تعذر: ' + failed.slice(0, 5).join(' | ') : ''), failed.length ? 'err' : 'okb');
+            go.textContent = 'تم'; return;
+          }
+          var batch = queue.splice(0, 100);
+          banner('جارٍ التعديل... ' + done + ' / ' + d.fixCount);
+          post('/admin/api/sku-apply', { items: batch.map(function (r) { return { id: r.id, productId: r.productId, from: r.from, to: r.to }; }) }).then(function (x) {
+            if (!x.ok) { banner('توقف: ' + x.error + ' (تم ' + done + ')', 'err'); go.disabled = false; return; }
+            done += x.done; failed = failed.concat(x.failed || []); next();
+          }).catch(function (e) { banner('خطأ في الاتصال: ' + e.message + ' (تم ' + done + ') — أعد الفحص للمتابعة', 'err'); go.disabled = false; });
+        })();
+      });
+      wrap.appendChild(go);
+    }
+    box.appendChild(wrap);
+  }
+  document.getElementById('skuAudit').addEventListener('click', function () {
+    banner('جارٍ فحص SKU (قد يستغرق دقيقة)...');
+    fetch('/admin/api/sku-audit', { credentials: 'same-origin' })
+      .then(function (r) { return r.json().catch(function () { return { ok: false, error: 'HTTP ' + r.status }; }); })
+      .then(function (d) { if (!d.ok) { banner('فشل الفحص: ' + d.error, 'err'); return; } banner(''); renderSkuReport(d); })
+      .catch(function (e) { banner('خطأ في الاتصال: ' + e.message, 'err'); });
   });
   document.getElementById('paidAll').addEventListener('click', function () {
     if (!window.confirm('وضع Paid في Shopify لكل الطلبات التي حالتها Complete في صندوق وما زالت غير مدفوعة؟')) return;
