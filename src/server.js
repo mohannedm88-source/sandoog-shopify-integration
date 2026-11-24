@@ -118,7 +118,7 @@ app.post(
       try {
               // Exchange/return orders are sent with external_reference "<order>-EX[n]" / "<order>-RT[n]".
               const exm = /^(.+?)-(EX|RT|RS)\d*$/i.exec(String(externalReference));
-              const order = await shopify.findOrderByName(exm ? exm[1] : externalReference);
+              const order = await shopify.findOrderByName(exm ? exm[1] : String(externalReference).replace(/-V\d+$/i, ''));
               if (!order) {
                         logger.warn('No Shopify order found matching external_reference "' + externalReference + '"');
                         return;
