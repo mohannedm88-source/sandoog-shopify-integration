@@ -274,7 +274,32 @@ function mount(app) {
       if (skuNote) orderPost.notes = (skuNote + (orderPost.notes ? ' | ' + orderPost.notes : '')).trim();
 
       logger.info('Admin: sending Sandoog order for Shopify order ' + name + ': ' + JSON.stringify(orderPost));
-      const result = await sandoog.createOrder(orderPost);
+      // Sandoog answers "Duplicated request." when it thinks the payload matches an earlier request. There is no
+      // matching order in the portal in that case, so retry with small cumulative differences until one is accepted.
+      const variants = [
+        () => {},
+        () => { orderPost.notes = ((orderPost.notes || '') + ' [' + name + ']').trim(); },
+        () => { if (orderPost.delivery.delivery_items[0]) orderPost.delivery.delivery_items[0].description = (orderPost.delivery.delivery_items[0].description || '') + ' (' + name + ')'; },
+        () => { orderPost.customer.address = (orderPost.customer.address || '') + ' - ' + name; },
+        () => { orderPost.customer.name = orderPost.customer.name + ' (' + name + ')'; },
+      ];
+      let result;
+      let lastErr = null;
+      for (let vi = 0; vi < variants.length; vi++) {
+        variants[vi]();
+        try {
+          result = await sandoog.createOrder(orderPost);
+          lastErr = null;
+          if (vi) logger.info('Order ' + name + ' accepted by Sandoog with duplicate-retry variant #' + vi);
+          break;
+        } catch (e) {
+          lastErr = e;
+          const txt = JSON.stringify((e.response && e.response.data) || e.message || '');
+          if (!/duplicat/i.test(txt)) throw e;
+          logger.warn('Sandoog said duplicate for ' + name + ' (variant #' + vi + ')');
+        }
+      }
+      if (lastErr) throw lastErr;
       logger.info('Sandoog accepted order ' + name + ' (manual send)', result);
 
       const sandoogId = typeof result === 'string' ? result : ((result && (result.id || (result.data && (result.data.id || result.data)))) || '');
