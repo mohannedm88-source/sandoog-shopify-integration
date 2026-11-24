@@ -100,6 +100,7 @@ const ORDERS_QUERY = `query ($first: Int!, $q: String) {
       id name createdAt cancelledAt tags note
       email phone paymentGatewayNames displayFulfillmentStatus
       totalPriceSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
+      currentTotalPriceSet { shopMoney { amount currencyCode } presentmentMoney { amount currencyCode } }
       shippingAddress { name phone city province address1 address2 }
       lineItems(first: 30) { nodes { title variantTitle sku quantity currentQuantity } }
     }
@@ -133,8 +134,8 @@ function shape(o) {
       .map((l) => ({
       title: l.title, variant: l.variantTitle || '', sku: l.sku || '', qty: typeof l.currentQuantity === 'number' ? l.currentQuantity : l.quantity,
     })),
-    total: o.totalPriceSet ? (o.totalPriceSet.presentmentMoney || o.totalPriceSet.shopMoney).amount : '',
-    currency: o.totalPriceSet ? (o.totalPriceSet.presentmentMoney || o.totalPriceSet.shopMoney).currencyCode : '',
+    total: (o.currentTotalPriceSet || o.totalPriceSet) ? ((o.currentTotalPriceSet || o.totalPriceSet).presentmentMoney || (o.currentTotalPriceSet || o.totalPriceSet).shopMoney).amount : '',
+    currency: (o.currentTotalPriceSet || o.totalPriceSet) ? ((o.currentTotalPriceSet || o.totalPriceSet).presentmentMoney || (o.currentTotalPriceSet || o.totalPriceSet).shopMoney).currencyCode : '',
     cod,
     note: o.note || '',
   };
