@@ -278,6 +278,7 @@ function mount(app) {
       // matching order in the portal in that case, so retry with small cumulative differences until one is accepted.
       const variants = [
         () => {},
+        () => { orderPost.external_reference = name + '-V2'; },
         () => { orderPost.notes = ((orderPost.notes || '') + ' [' + name + ']').trim(); },
         () => { if (orderPost.delivery.delivery_items[0]) orderPost.delivery.delivery_items[0].description = (orderPost.delivery.delivery_items[0].description || '') + ' (' + name + ')'; },
         () => { orderPost.customer.address = (orderPost.customer.address || '') + ' - ' + name; },
@@ -309,7 +310,7 @@ function mount(app) {
           'mutation ($id: ID!, $tags: [String!]!) { tagsAdd(id: $id, tags: $tags) { userErrors { field message } } }',
           { id: node.id, tags: [SENT_TAG] }
         );
-        const line = `[Sandoog] ${new Date().toISOString()} sent manually ${sandoogIdText}${amountNote ? ' | ' + amountNote : ''}${skuNote ? ' | ' + skuNote : ''}`.trim();
+        const line = `[Sandoog] ${new Date().toISOString()} sent manually ${sandoogIdText}${orderPost.external_reference !== name ? ' | ref ' + orderPost.external_reference : ''}${amountNote ? ' | ' + amountNote : ''}${skuNote ? ' | ' + skuNote : ''}`.trim();
         await shopify.graphql(
           'mutation ($input: OrderInput!) { orderUpdate(input: $input) { userErrors { field message } } }',
           { input: { id: node.id, note: node.note ? node.note + '\n' + line : line } }
