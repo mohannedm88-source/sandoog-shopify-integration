@@ -123,7 +123,7 @@ description: [li.variant_title, li.sku ? ('SKU: ' + li.sku) : ''].filter(Boolean
         quantity: li.quantity || 1,
   }));
 
-  const totalPrice = Number(shopifyOrder.total_price || shopifyOrder.current_total_price || 0);
+  const totalPrice = Number(shopifyOrder.current_total_price || shopifyOrder.total_price || 0);
     const cod = isCashOnDelivery(shopifyOrder);
 
   const orderPost = {
