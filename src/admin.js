@@ -273,6 +273,8 @@ function mount(app) {
         orderPost.notes = (amountNote + (orderPost.notes ? ' | ' + orderPost.notes : '')).trim();
       }
       if (skuNote) orderPost.notes = (skuNote + (orderPost.notes ? ' | ' + orderPost.notes : '')).trim();
+      const extraNote = String(b.note || '').replace(/\s+/g, ' ').trim().slice(0, 500);
+      if (extraNote) orderPost.notes = ('ملاحظة الإدارة: ' + extraNote + (orderPost.notes ? ' | ' + orderPost.notes : '')).trim();
 
       logger.info('Admin: sending Sandoog order for Shopify order ' + name + ': ' + JSON.stringify(orderPost));
       // Sandoog answers "Duplicated request." when it thinks the payload matches an earlier request. There is no
@@ -311,7 +313,7 @@ function mount(app) {
           'mutation ($id: ID!, $tags: [String!]!) { tagsAdd(id: $id, tags: $tags) { userErrors { field message } } }',
           { id: node.id, tags: [SENT_TAG] }
         );
-        const line = `[Sandoog] ${new Date().toISOString()} sent manually ${sandoogIdText}${orderPost.external_reference !== name ? ' | ref ' + orderPost.external_reference : ''}${amountNote ? ' | ' + amountNote : ''}${skuNote ? ' | ' + skuNote : ''}`.trim();
+        const line = `[Sandoog] ${new Date().toISOString()} sent manually ${sandoogIdText}${orderPost.external_reference !== name ? ' | ref ' + orderPost.external_reference : ''}${amountNote ? ' | ' + amountNote : ''}${skuNote ? ' | ' + skuNote : ''}${extraNote ? ' | ملاحظة: ' + extraNote : ''}`.trim();
         await shopify.graphql(
           'mutation ($input: OrderInput!) { orderUpdate(input: $input) { userErrors { field message } } }',
           { input: { id: node.id, note: node.note ? node.note + '\n' + line : line } }
