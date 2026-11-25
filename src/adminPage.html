@@ -232,7 +232,8 @@
     var sent = o.status !== 'pending';
     var amt = el('input', { type: 'number', min: '0', value: String(Math.round(o.total) || 0), style: 'width:130px' });
     var skuInputs = [];
-    [citySel, region, phone, addr, amt].forEach(function (x) { x.disabled = sent; });
+    var memo = el('textarea', { placeholder: 'ملاحظة تظهر لصندوق مع الطلب (اختياري)', maxlength: '500', style: 'min-height:50px' });
+    [citySel, region, phone, addr, amt, memo].forEach(function (x) { x.disabled = sent; });
     var btn = el('button', { class: 'send', text: sent ? 'تم الإرسال' : 'إرسال إلى صندوق' });
     btn.disabled = sent;
     btn.addEventListener('click', function () {
@@ -244,10 +245,10 @@
       if (skuVals.some(function (x) { return !x; })) { banner('أحد الـ SKU فارغ في الطلب ' + o.name, 'err'); return; }
       var skuChanges = [];
       skuVals.forEach(function (v, idx) { if (v !== (o.items[idx].sku || '')) skuChanges.push((o.items[idx].sku || 'بدون SKU') + ' ← ' + v); });
-      if (!window.confirm('إرسال الطلب ' + o.name + ' إلى صندوق؟\nالمحافظة: ' + citySel.options[citySel.selectedIndex].text + '\nالهاتف: ' + phone.value + '\nالمبلغ المطلوب من الزبون: ' + amtVal + ' د.ع' + (amtChanged ? ' (معدّل، الأصلي ' + Math.round(o.total) + ')' : '') + (skuChanges.length ? '\nتعديل SKU: ' + skuChanges.join('، ') : ''))) return;
+      if (!window.confirm('إرسال الطلب ' + o.name + ' إلى صندوق؟\nالمحافظة: ' + citySel.options[citySel.selectedIndex].text + '\nالهاتف: ' + phone.value + '\nالمبلغ المطلوب من الزبون: ' + amtVal + ' د.ع' + (amtChanged ? ' (معدّل، الأصلي ' + Math.round(o.total) + ')' : '') + (skuChanges.length ? '\nتعديل SKU: ' + skuChanges.join('، ') : '') + (memo.value.trim() ? '\nملاحظة: ' + memo.value.trim() : ''))) return;
       btn.disabled = true; btn.textContent = 'جارٍ الإرسال...';
       fetch('/admin/api/send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
-        body: JSON.stringify({ name: o.name, city: citySel.value, region: region.value, phone: phone.value, address: addr.value, amount: amtChanged ? amtVal : undefined, skus: skuInputs.length ? skuVals : undefined, origSkus: skuInputs.length ? o.items.map(function (i) { return i.sku || ''; }) : undefined }) })
+        body: JSON.stringify({ name: o.name, city: citySel.value, region: region.value, phone: phone.value, address: addr.value, amount: amtChanged ? amtVal : undefined, skus: skuInputs.length ? skuVals : undefined, origSkus: skuInputs.length ? o.items.map(function (i) { return i.sku || ''; }) : undefined, note: memo.value.trim() || undefined }) })
         .then(function (r) { return r.json().catch(function () { return { ok: false, error: 'HTTP ' + r.status }; }); })
         .then(function (d) {
           if (d.ok) { banner('تم إرسال ' + o.name + ' إلى صندوق ' + (d.sandoogId || '') + (d.warning ? ' — ' + d.warning : (d.fulfilled ? ' — وصار Fulfilled في Shopify' : '')), d.warning ? 'err' : 'okb'); load(true); }
@@ -267,6 +268,8 @@
       el('div', { class: 'mute', style: 'margin-top:6px', text: (o.cod ? 'الدفع عند الاستلام: ' : 'مدفوع: ') + o.total + ' ' + o.currency }),
       sent ? null : el('label', { text: 'المبلغ المطلوب من الزبون (دينار) — يمكن تعديله قبل الإرسال' }),
       sent ? null : amt,
+      sent ? null : el('label', { text: 'ملاحظة لصندوق (اختياري)' }),
+      sent ? null : memo,
     ]);
     var loc = el('div', {}, [
       el('label', { text: 'المحافظة (صندوق)' }), citySel,
