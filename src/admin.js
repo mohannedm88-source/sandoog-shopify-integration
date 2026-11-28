@@ -464,6 +464,7 @@ function mount(app) {
     if (!CITY_CODES.has(code)) return res.status(400).json({ ok: false, error: 'اختر المحافظة من القائمة' });
     if (!phone) return res.status(400).json({ ok: false, error: 'رقم الهاتف فارغ' });
     const amount = (b.amount === undefined || b.amount === null || b.amount === '') ? null : Math.max(0, Math.round(Number(b.amount) || 0));
+    const extraNote = String(b.note || '').replace(/\s+/g, ' ').trim().slice(0, 500);
     const editItems = Array.isArray(b.items)
       ? b.items
         .map((x) => ({
@@ -520,6 +521,7 @@ function mount(app) {
       if (amount !== null && amount !== origTotal) editSummary += (editSummary ? ' | ' : '') + 'المبلغ المطلوب: ' + amount + ' د.ع (كان ' + origTotal + ')';
       orderPost.notes = 'إعادة إرسال للطلب ' + name + ' (رجع ولسا الزبون بدو الطلب) - أجور التوصيل على الشركة. '
         + (editSummary ? 'تعديل عند إعادة الإرسال: ' + editSummary + '. ' : 'نفس القطع ونفس المبلغ. ')
+        + (extraNote ? 'ملاحظة الإدارة: ' + extraNote + '. ' : '')
         + String(orderPost.notes || '').split('\n').filter((l) => !/^\[Sandoog\]/.test(l)).join(' ').trim();
       orderPost.customer.state = code;
       orderPost.delivery.delivery_region = b.region === 'Center' || b.region === 'County'
@@ -571,7 +573,7 @@ function mount(app) {
           'mutation ($id: ID!, $tags: [String!]!) { tagsAdd(id: $id, tags: $tags) { userErrors { field message } } }',
           { id: node.id, tags: ['sandoog-resent'] }
         );
-        const line = `[Sandoog] ${new Date().toISOString()} resend order ${ref} created ${sidText}${editSummary ? ' | ' + editSummary : ''}`.trim();
+        const line = `[Sandoog] ${new Date().toISOString()} resend order ${ref} created ${sidText}${editSummary ? ' | ' + editSummary : ''}${extraNote ? ' | ملاحظة: ' + extraNote : ''}`.trim();
         await shopify.graphql(
           'mutation ($input: OrderInput!) { orderUpdate(input: $input) { userErrors { field message } } }',
           { input: { id: node.id, note: node.note ? node.note + '\n' + line : line } }
