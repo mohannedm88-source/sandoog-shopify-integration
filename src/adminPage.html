@@ -109,6 +109,7 @@
     city.addEventListener('change', function () { region.value = city.value === 'baghdad' ? 'Center' : 'County'; });
     var phone = el('input', { type: 'text', value: phone0.value, dir: 'ltr' });
     var addr = el('textarea', {}); addr.value = addr0.value;
+    var memo = el('textarea', { placeholder: 'ملاحظة تظهر لصندوق مع الطلب (اختياري)', maxlength: '500', style: 'min-height:50px' });
     var rows = o.items.map(function (i) {
       var q = el('input', { type: 'number', min: '0', max: '50', value: String(i.qty), style: 'width:60px' });
       return { item: i, q: q, row: el('div', { class: 'row' }, [el('span', { text: i.title + (i.variant ? ' — ' + i.variant : '') }), el('span', { class: 'sku', text: i.sku }), el('span', { class: 'mute', text: 'الكمية (0 = حذف):' }), q]) };
@@ -131,10 +132,10 @@
         .concat(newRows.map(function (r) { return { sku: r.sku.value.trim(), title: r.title.value.trim(), qty: Number(r.q.value) || 1 }; }).filter(function (x) { return x.sku; }));
       if (!items.length) { banner('لازم يبقى قطعة وحدة على الأقل', 'err'); return; }
       if (!city.value) { banner('اختر المحافظة', 'err'); return; }
-      if (!window.confirm('إعادة إرسال الطلب ' + o.name + ' إلى صندوق كطلب جديد؟\nالمبلغ المطلوب من الزبون: ' + (Number(amount.value) || 0) + ' د.ع\nأجور التوصيل الجديدة على الشركة.\nلن يُنشأ مرتجع ولن يتغير المخزون في Shopify.')) return;
+      if (!window.confirm('إعادة إرسال الطلب ' + o.name + ' إلى صندوق كطلب جديد؟\nالمبلغ المطلوب من الزبون: ' + (Number(amount.value) || 0) + ' د.ع\nأجور التوصيل الجديدة على الشركة.\nلن يُنشأ مرتجع ولن يتغير المخزون في Shopify.' + (memo.value.trim() ? '\nملاحظة: ' + memo.value.trim() : ''))) return;
       go.disabled = true; go.textContent = 'جارٍ الإرسال...';
       fetch('/admin/api/resend', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
-        body: JSON.stringify({ name: o.name, items: items, amount: Number(amount.value) || 0, city: city.value, region: region.value, phone: phone.value, address: addr.value }) })
+        body: JSON.stringify({ name: o.name, items: items, amount: Number(amount.value) || 0, note: memo.value.trim() || undefined, city: city.value, region: region.value, phone: phone.value, address: addr.value }) })
         .then(function (r) { return r.json().catch(function () { return { ok: false, error: 'HTTP ' + r.status }; }); })
         .then(function (d) {
           if (d.ok) { banner('تمت إعادة الإرسال: ' + d.ref + ' ' + (d.sandoogId || '') + (d.warning ? ' — ' + d.warning : ''), d.warning ? 'err' : 'okb'); onDone(true); }
@@ -148,6 +149,7 @@
       el('div', {}, rows.map(function (r) { return r.row; })),
       newBox, addBtn,
       el('label', { text: 'المبلغ المطلوب من الزبون عند الاستلام (دينار)' }), amount,
+      el('label', { text: 'ملاحظة لصندوق (اختياري)' }), memo,
       el('label', { text: 'المحافظة' }), city, el('label', { text: 'المنطقة' }), region,
       el('label', { text: 'الهاتف' }), phone, el('label', { text: 'العنوان' }), addr,
       el('div', { class: 'row', style: 'margin-top:8px' }, [go, cancel]),
