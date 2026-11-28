@@ -21,6 +21,11 @@
   .banner { padding:10px 14px; border-radius:8px; border:1px solid var(--line); background:var(--card); }
   .banner.err { border-color:var(--bad); color:var(--bad); }
   .banner.okb { border-color:var(--ok); color:var(--ok); }
+  .povl { position:fixed; inset:0; background:rgba(0,0,0,.45); display:flex; align-items:center; justify-content:center; z-index:50; padding:16px; }
+  .pbox { background:var(--card); color:var(--ink); border:1px solid var(--bad); border-radius:12px; padding:18px; max-width:520px; width:100%; max-height:80vh; overflow:auto; display:grid; gap:8px; }
+  .prow { border:1px solid var(--line); border-radius:8px; padding:8px 10px; }
+  .psku { font-family:ui-monospace,Menlo,Consolas,monospace; direction:ltr; text-align:left; font-weight:600; }
+  .pwhy { color:var(--bad); font-size:13px; }
   .grid { display:grid; gap:12px; }
   .order { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; display:grid; grid-template-columns: 150px 1.1fr 1.4fr 1.3fr 150px; gap:14px; align-items:start; }
   .order.warn { border-color:var(--warn); }
@@ -75,6 +80,30 @@
   function banner(text, kind) {
     var m = document.getElementById('msg'); m.textContent = '';
     if (text) m.appendChild(el('div', { class: 'banner ' + (kind || ''), text: text }));
+  }
+  // Popup listing every product Sandoog cannot supply (server sends d.problems; a single Sandoog stock error is parsed as fallback).
+  function showProblems(d, orderName) {
+    var items = Array.isArray(d.problems) ? d.problems.slice() : [];
+    if (!items.length) {
+      var m = /not available for this SKU \(([^)]+)\)[^,]*, available quantity is (\d+)/i.exec(String(d.error || ''));
+      if (m) items.push({ kind: 'stock', sku: m[1], available: Number(m[2]) });
+    }
+    if (!items.length) return false;
+    var old = document.getElementById('prob'); if (old) old.remove();
+    var rows = items.map(function (p) {
+      var why = p.kind === 'missing' ? 'غير موجود في صندوق' : (p.kind === 'nosku' ? 'بدون SKU في Shopify' : (typeof p.needed === 'number' ? 'غير متوفر — المتاح ' + p.available + ' والمطلوب ' + p.needed : 'غير متوفر — المتاح ' + p.available));
+      return el('div', { class: 'prow' }, [el('div', { class: 'psku', text: p.sku || p.title || '' }), el('div', { class: 'pwhy', text: why }), (p.title && p.sku) ? el('div', { class: 'mute', text: p.title }) : null]);
+    });
+    var ov;
+    var close = el('button', { class: 'send', text: 'حسناً', onclick: function () { ov.remove(); } });
+    var box = el('div', { class: 'pbox' }, [
+      el('div', { style: 'font-weight:700;font-size:16px', text: 'تعذر الإرسال — ' + items.length + (items.length === 1 ? ' منتج غير متوفر' : ' منتجات غير متوفرة') }),
+      el('div', { class: 'mute', text: (orderName ? 'الطلب ' + orderName + ' — ' : '') + 'المنتجات اللي فيها مشكلة، عدّل الـ SKU أو انتظر توفر المخزون' }),
+    ].concat(rows, [close]));
+    ov = el('div', { id: 'prob', class: 'povl' }, [box]);
+    ov.addEventListener('click', function (e) { if (e.target === ov) ov.remove(); });
+    document.body.appendChild(ov);
+    return true;
   }
   function fmtDate(s) {
     try { return new Date(s).toLocaleString('ar-IQ', { dateStyle: 'medium', timeStyle: 'short' }); } catch (e) { return s; }
@@ -139,7 +168,7 @@
         .then(function (r) { return r.json().catch(function () { return { ok: false, error: 'HTTP ' + r.status }; }); })
         .then(function (d) {
           if (d.ok) { banner('تمت إعادة الإرسال: ' + d.ref + ' ' + (d.sandoogId || '') + (d.warning ? ' — ' + d.warning : ''), d.warning ? 'err' : 'okb'); onDone(true); }
-          else { banner('فشل: ' + d.error, 'err'); go.disabled = false; go.textContent = 'إعادة الإرسال إلى صندوق'; }
+          else { if (!showProblems(d, o.name)) banner('فشل: ' + d.error, 'err'); go.disabled = false; go.textContent = 'إعادة الإرسال إلى صندوق'; }
         })
         .catch(function (e) { banner('خطأ في الاتصال: ' + e.message, 'err'); go.disabled = false; go.textContent = 'إعادة الإرسال إلى صندوق'; });
     });
@@ -200,7 +229,7 @@
         .then(function (r) { return r.json().catch(function () { return { ok: false, error: 'HTTP ' + r.status }; }); })
         .then(function (d) {
           if (d.ok) { banner('تم إنشاء ' + d.ref + ' في صندوق ' + (d.sandoogId || '') + (d.warning ? ' — ' + d.warning : ''), d.warning ? 'err' : 'okb'); onDone(true); }
-          else { banner('فشل: ' + d.error, 'err'); go.disabled = false; go.textContent = 'إنشاء الطلب في صندوق'; }
+          else { if (!showProblems(d, o.name)) banner('فشل: ' + d.error, 'err'); go.disabled = false; go.textContent = 'إنشاء الطلب في صندوق'; }
         })
         .catch(function (e) { banner('خطأ في الاتصال: ' + e.message, 'err'); go.disabled = false; go.textContent = 'إنشاء الطلب في صندوق'; });
     });
@@ -256,7 +285,7 @@
         .then(function (r) { return r.json().catch(function () { return { ok: false, error: 'HTTP ' + r.status }; }); })
         .then(function (d) {
           if (d.ok) { banner('تم إرسال ' + o.name + ' إلى صندوق ' + (d.sandoogId || '') + (d.warning ? ' — ' + d.warning : (d.fulfilled ? ' — وصار Fulfilled في Shopify' : '')), d.warning ? 'err' : 'okb'); load(true); }
-          else { banner('فشل إرسال ' + o.name + ': ' + d.error, 'err'); btn.disabled = false; btn.textContent = 'إرسال إلى صندوق'; }
+          else { if (!showProblems(d, o.name)) banner('فشل إرسال ' + o.name + ': ' + d.error, 'err'); btn.disabled = false; btn.textContent = 'إرسال إلى صندوق'; }
         })
         .catch(function (e) { banner('خطأ في الاتصال: ' + e.message, 'err'); btn.disabled = false; btn.textContent = 'إرسال إلى صندوق'; });
     });
