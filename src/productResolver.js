@@ -30,13 +30,41 @@ function findProduct(node, want) {
   return null;
 }
 
+// Total available stock across warehouses, or null when Sandoog did not tell us.
+function availableOf(match) {
+  const wp = match && match.warehouse_products;
+  if (Array.isArray(wp) && wp.length) {
+    let total = 0;
+    let seen = false;
+    for (const w of wp) {
+      const q = Number(w && w.available_quantity);
+      if (Number.isFinite(q)) { total += q; seen = true; }
+    }
+    if (seen) return total;
+  }
+  const q = Number(match && match.available_quantity);
+  return Number.isFinite(q) ? q : null;
+}
+
+function describeProblem(p) {
+  if (p.kind === 'nosku') return 'بدون SKU: ' + (p.title || '');
+  if (p.kind === 'missing') return 'غير موجود في صندوق: ' + p.sku;
+  return 'غير متوفر: ' + p.sku + ' (المتاح ' + p.available + '، المطلوب ' + p.needed + ')';
+}
+
+// Resolves every delivery item to its Sandoog product id. Instead of stopping at the first bad item it checks all of
+// them and throws ONE error (err.problems = [{kind: nosku|missing|stock, sku, title, needed, available}]) so the admin
+// page can show every unavailable product together.
 async function resolveSandoogProductIds(orderPost, shopifyOrder) {
   const lines = shopifyOrder.line_items || [];
   const items = orderPost.delivery.delivery_items;
+  const problems = [];
+  const need = new Map();
   for (let i = 0; i < items.length; i++) {
     const rawSku = (lines[i] && lines[i].sku) || '';
     if (!rawSku) {
-      throw new Error('Shopify line item "' + items[i].name + '" has no SKU');
+      problems.push({ kind: 'nosku', title: items[i].name });
+      continue;
     }
     const want = normSku(rawSku);
     const attempts = [
@@ -52,7 +80,8 @@ async function resolveSandoogProductIds(orderPost, shopifyOrder) {
       if (match) break;
     }
     if (!match) {
-      throw new Error('No Sandoog product found for SKU "' + rawSku + '"');
+      problems.push({ kind: 'missing', sku: rawSku, title: items[i].name });
+      continue;
     }
     const idKey = ['id', 'product_id', 'productId'].find((k) => match[k] != null);
     if (!idKey) {
@@ -62,6 +91,18 @@ async function resolveSandoogProductIds(orderPost, shopifyOrder) {
     const skuKey = Object.keys(match).find((key) => /sku/i.test(key) && typeof match[key] === 'string');
     items[i].sku = skuKey ? match[skuKey] : rawSku;
     logger.info('SKU "' + rawSku + '" -> Sandoog product id ' + items[i].id);
+    const key = normSku(items[i].sku);
+    const cur = need.get(key) || { sku: items[i].sku, title: items[i].name, needed: 0, available: availableOf(match) };
+    cur.needed += Number(items[i].quantity) || 1;
+    need.set(key, cur);
+  }
+  for (const n of need.values()) {
+    if (n.available !== null && n.available < n.needed) problems.push({ kind: 'stock', sku: n.sku, title: n.title, needed: n.needed, available: n.available });
+  }
+  if (problems.length) {
+    const e = new Error('منتجات غير متوفرة أو غير موجودة في صندوق (' + problems.length + '): ' + problems.map(describeProblem).join(' ؛ '));
+    e.problems = problems;
+    throw e;
   }
   return orderPost;
 }
