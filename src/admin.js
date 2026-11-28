@@ -184,6 +184,11 @@ function errText(err) {
   return (err && err.message) || String(err);
 }
 
+// Error body for the admin page; carries the full list of unavailable products when the resolver found any.
+function failBody(err) {
+  return { ok: false, error: errText(err), problems: err && Array.isArray(err.problems) ? err.problems : undefined };
+}
+
 function mount(app) {
   const json = express.json({ limit: '100kb' });
 
@@ -335,7 +340,7 @@ function mount(app) {
       return res.json({ ok: true, sandoogId: sandoogIdText, fulfilled, warning: fulfillWarning || undefined });
     } catch (err) {
       logger.error('Admin: failed to send order ' + name, err.response ? err.response.data : err.message);
-      return res.status(500).json({ ok: false, error: errText(err) });
+      return res.status(500).json(failBody(err));
     } finally {
       sending.delete(name);
     }
@@ -446,7 +451,7 @@ function mount(app) {
       return res.json({ ok: true, ref, sandoogId: sidText });
     } catch (err) {
       logger.error('Admin: failed to create ' + kind + ' order for ' + name, err.response ? err.response.data : err.message);
-      return res.status(500).json({ ok: false, error: errText(err) });
+      return res.status(500).json(failBody(err));
     } finally {
       sending.delete(lockKey);
     }
@@ -585,7 +590,7 @@ function mount(app) {
       return res.json({ ok: true, ref, sandoogId: sidText, warning: warnings.join(' — ') || undefined });
     } catch (err) {
       logger.error('Admin: failed to resend order ' + name, err.response ? err.response.data : err.message);
-      return res.status(500).json({ ok: false, error: errText(err) });
+      return res.status(500).json(failBody(err));
     } finally {
       sending.delete(lockKey);
     }
